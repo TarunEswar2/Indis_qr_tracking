@@ -1,0 +1,15 @@
+{
+  "name": "qr_generation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Generates designer QR codes (colored modules + center logo) for INDIS attendee serial codes.",
+  "main": "generate-qr.js",
+  "scripts": {
+    "generate": "node generate-qr.js",
+    "batch": "node batch-generate.js"
+  },
+  "dependencies": {
+    "canvas": "^2.11.2",
+    "qrcode": "^1.5.3"
+  }
+}
