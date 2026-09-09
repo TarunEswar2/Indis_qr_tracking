@@ -3,250 +3,66 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Attendee,
+  ITINERARY_ITEMS,
   ItineraryKey,
   getAttendeeBySerial,
   markItineraryItem,
 } from "@/lib/supabaseClient";
 
-// ---------------------------------------------------------------------------
-// This screen intentionally mirrors prototype_ui/indis-scan-flow.jsx's look
-// and flow exactly (same components, same CSS), but wired to the real
-// Supabase attendees table instead of mock state. A volunteer first picks
-// a day + category (Kit / Lunch / High Tea / Gala), THEN scans or looks up
-// an attendee — the scan/lookup marks just that one category.
-//
-// Your schema doesn't have a per-day column for every category (kit and
-// gala are one-time, not per-day), so CATEGORY_TO_KEY below is the mapping
-// between the prototype's "day + abstract category" concept and your real
-// itinerary columns. Change this mapping (not the schema) if you want to
-// move Kit/Gala to a different day, or see the earlier chat message for
-// how to make categories fully data-driven instead of hardcoded here.
-// ---------------------------------------------------------------------------
-
-type Category = "kit" | "lunch" | "highTea" | "gala";
-type Day = 1 | 2;
-
-const CATEGORY_LABEL: Record<Category, string> = {
-  kit: "Conference Kit",
-  lunch: "Lunch",
-  highTea: "High Tea",
-  gala: "Gala Dinner",
-};
-
-const DAY_CATEGORIES: Record<Day, Category[]> = {
-  1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea", "gala"],
-};
-
-// day + category -> real Supabase column, or null if that combo doesn't
-// apply (e.g. there's no lunch on... there's no "kit" on day 2).
-function keyFor(day: Day, category: Category): ItineraryKey | null {
-  if (category === "kit") return day === 1 ? "kit_received" : null;
-  if (category === "lunch") return day === 1 ? "lunch_day1" : "lunch_day2";
-  if (category === "highTea") return day === 1 ? "high_tea_day1" : "high_tea_day2";
-  if (category === "gala") return day === 2 ? "gala_dinner" : null;
-  return null;
-}
-
-const TODAY: Day = 1; // change to 2 once day 1 has actually passed at the event
+// Camera-based QR scanning via html5-qrcode, with manual entry kept as a
+// fallback for damaged/unscannable badges. The scanner runs inside the
+// #reader div and is started/stopped as the volunteer moves between
+// "looking for a badge" and "reviewing a found attendee" so the camera
+// isn't burning battery/CPU while a result is on screen.
 
 const SCANNER_ELEMENT_ID = "reader";
 
-// ---------- icons (ported as-is from the prototype) ----------
-
-function BackArrow(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M19 12H5M5 12L11 6M5 12L11 18"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="46" height="46" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M4 12.5L9.5 18L20 6"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ArrowRight(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M5 12H19M19 12L13 6M19 12L13 18"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function LockedTag() {
-  return <span className="pill pill-confirmed">Done</span>;
-}
-
-function DelegatePreview({ attendee }: { attendee: Attendee }) {
-  return (
-    <div className="delegate-block">
-      <p className="delegate-serial">{attendee.serial_code}</p>
-      <p className="delegate-tag">Delegate</p>
-      <p className="delegate-name">{attendee.name}</p>
-      <p className="delegate-role">{attendee.organization ?? "—"}</p>
-    </div>
-  );
-}
-
-// ---------- HOME ----------
-
-function HomeScreen({
-  day,
-  setDay,
-  today,
-  onPick,
-}: {
-  day: Day;
-  setDay: (d: Day) => void;
-  today: Day;
-  onPick: (c: Category) => void;
-}) {
-  const cats = DAY_CATEGORIES[day];
-  const isToday = day === today;
-  const isPast = day < today;
-
-  return (
-    <div className="screen home">
-      <div className="topline">
-        <div className="mark">INDIS 2026</div>
-        <div className="mark-sub">Volunteer scan</div>
-      </div>
-
-      <div className="day-switch">
-        {([1, 2] as Day[]).map((d) => (
-          <button
-            key={d}
-            className={`day-tab ${d === day ? "day-tab-active" : ""}`}
-            onClick={() => setDay(d)}
-          >
-            Day {d}
-          </button>
-        ))}
-      </div>
-
-      <h1 className="day-heading">Day {String(day).padStart(2, "0")}</h1>
-      <p className="day-sub">Select what you're scanning for</p>
-
-      <div className="cat-list">
-        {cats.map((c) => (
-          <button
-            key={c}
-            className={`cat-card ${!isToday ? "cat-card-locked" : ""}`}
-            onClick={() => isToday && onPick(c)}
-            disabled={!isToday}
-          >
-            <span className="cat-name">{CATEGORY_LABEL[c]}</span>
-            {isToday ? <ArrowRight className="cat-arrow" /> : isPast ? <LockedTag /> : null}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------- SCAN ----------
-
-function ScanScreen({
-  day,
-  category,
-  tab,
-  setTab,
-  onBack,
-  onConfirmed,
-  idValue,
-  setIdValue,
-}: {
-  day: Day;
-  category: Category;
-  tab: "qr" | "id";
-  setTab: (t: "qr" | "id") => void;
-  onBack: () => void;
-  onConfirmed: (attendee: Attendee) => void;
-  idValue: string;
-  setIdValue: (v: string) => void;
-}) {
+export default function ScanPage() {
+  const [attendee, setAttendee] = useState<Attendee | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [checkedAttendee, setCheckedAttendee] = useState<Attendee | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const scannerRef = useRef<any>(null);
 
-  const itemKey = keyFor(day, category);
-
-  async function confirmForAttendee(attendee: Attendee) {
-    if (!itemKey) {
-      setError(`${CATEGORY_LABEL[category]} isn't tracked on Day ${day}.`);
-      return;
-    }
-    const alreadyDone = Boolean(attendee[itemKey]);
-    if (alreadyDone && !confirm(`${attendee.name} is already marked for ${CATEGORY_LABEL[category]}. Mark again anyway?`)) {
-      return;
-    }
-    await markItineraryItem(attendee.id, itemKey);
-    const refreshed = await getAttendeeBySerial(attendee.serial_code);
-    onConfirmed(refreshed);
-  }
-
-  async function handleDecoded(serialCode: string) {
+  async function handleScan(serialCode: string) {
     const trimmed = serialCode.trim();
     if (!trimmed) return;
     setError(null);
-    setStatus("Looking up…");
+    setLoading(true);
     try {
-      const attendee = await getAttendeeBySerial(trimmed);
+      const result = await getAttendeeBySerial(trimmed);
+      setAttendee(result);
       await stopScanner();
-      await confirmForAttendee(attendee);
-    } catch {
+    } catch (e) {
+      setAttendee(null);
       setError("No attendee found for that code.");
     } finally {
-      setStatus(null);
+      setLoading(false);
     }
   }
 
-  async function runCheck() {
-    if (checking || !idValue.trim()) return;
-    setChecking(true);
+  async function handleMark(item: ItineraryKey) {
+    if (!attendee) return;
+    const alreadyDone = Boolean(attendee[item]);
+    if (alreadyDone && !confirm("Already marked. Mark again anyway?")) return;
+
+    await markItineraryItem(attendee.id, item);
+    const refreshed = await getAttendeeBySerial(attendee.serial_code);
+    setAttendee(refreshed);
+  }
+
+  async function scanNext() {
+    setAttendee(null);
     setError(null);
-    try {
-      const attendee = await getAttendeeBySerial(idValue.trim());
-      setCheckedAttendee(attendee);
-    } catch {
-      setError("No attendee found for that code.");
-      setCheckedAttendee(null);
-    } finally {
-      setChecking(false);
-    }
+    // Belt-and-suspenders: make sure any lingering scanner instance is
+    // fully torn down before we spin up a new one on the same #reader div.
+    await stopScanner();
+    startScanner();
   }
 
-  function handleIdChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setIdValue(e.target.value);
-    if (checkedAttendee) setCheckedAttendee(null);
-  }
+  // --- camera scanner lifecycle ---
 
   async function startScanner() {
     setCameraError(null);
@@ -260,24 +76,39 @@ function ScanScreen({
 
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
         (decodedText: string) => {
-          handleDecoded(decodedText);
+          // fires on every successful decode; handleScan below stops
+          // the scanner once we get a match, so this can't double-fire
+          // into two lookups for the same badge
+          handleScan(decodedText);
         },
         () => {
-          // per-frame "no QR found" — expected constantly, not an error
+          // per-frame "no QR found" callback — expected constantly while
+          // aiming the camera, intentionally not surfaced as an error
         }
       );
       setScannerActive(true);
-    } catch {
+    } catch (e: any) {
       setScannerActive(false);
-      setCameraError("Couldn't access the camera. Use manual entry below instead.");
+      setCameraError(
+        "Couldn't access the camera. Check camera permissions, or use manual entry below."
+      );
     }
   }
 
   async function stopScanner() {
     const scanner = scannerRef.current;
     if (scanner) {
+      // html5-qrcode's stop()/clear() can throw *synchronously* (not just
+      // reject) if the scanner isn't in a "running" state yet — hence the
+      // try/catches. Just as important: we now AWAIT stop() before clear(),
+      // and callers await this whole function before starting a new
+      // scanner. Previously stop()/clear() were fired off without waiting,
+      // so tapping "Scan next attendee" could start a brand-new camera
+      // session on the same #reader div while the old one was still in the
+      // middle of shutting down — the two collided and the preview stayed
+      // black.
       try {
         await scanner.stop();
       } catch {}
@@ -298,422 +129,88 @@ function ScanScreen({
   }, []);
 
   return (
-    <div className="screen">
-      <div className="scan-header">
-        <button className="icon-btn" onClick={onBack} aria-label="Back">
-          <BackArrow />
-        </button>
-        <h1 className="scan-title">
-          Day {String(day).padStart(2, "0")}, {CATEGORY_LABEL[category]}
-        </h1>
-      </div>
+    <main className="min-h-screen p-6 max-w-md mx-auto">
+      <h1 className="text-xl font-semibold mb-4">Volunteer Scanner</h1>
 
-      <div className="tabs">
-        <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => setTab("qr")}>
-          QR
-        </button>
-        <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => setTab("id")}>
-          ID
-        </button>
-      </div>
+      {!attendee && (
+        <>
+          <div
+            id={SCANNER_ELEMENT_ID}
+            className="w-full rounded-lg overflow-hidden bg-slate-900 mb-3"
+            style={{ minHeight: scannerActive ? undefined : 0 }}
+          />
 
-      {tab === "qr" ? (
-        <div className="qr-pane">
-          <div className="viewfinder">
-            <div id={SCANNER_ELEMENT_ID} className="viewfinder-camera" />
-            <span className="corner corner-tl" />
-            <span className="corner corner-tr" />
-            <span className="corner corner-bl" />
-            <span className="corner corner-br" />
-            {scannerActive && <span className="scan-line" />}
-          </div>
-          {cameraError ? (
-            <p className="qr-help qr-help-warn">{cameraError}</p>
-          ) : (
-            <p className="qr-help">Align the QR on the delegate's badge within the frame</p>
+          {cameraError && (
+            <p className="text-sm text-amber-600 mb-3">{cameraError}</p>
           )}
-          {status && <p className="scan-status">{status}</p>}
-          {error && <p className="scan-error">{error}</p>}
-        </div>
-      ) : (
-        <div className="id-pane">
-          <label className="id-label" htmlFor="delegate-id">
-            Delegate ID
-          </label>
-          <div className="id-row">
-            <div className="id-input-wrap">
-              <input
-                id="delegate-id"
-                className="id-input"
-                placeholder="Enter unique ID"
-                value={idValue}
-                onChange={handleIdChange}
-              />
-              {checkedAttendee && <CheckIcon className="id-check-icon" width="16" height="16" />}
-            </div>
-            <button
-              className="check-btn"
-              onClick={runCheck}
-              disabled={!idValue.trim() || checking || Boolean(checkedAttendee)}
+          {!cameraError && (
+            <p className="text-sm text-slate-500 mb-4">
+              Point the camera at the QR code on the delegate's badge.
+            </p>
+          )}
+
+          <details className="mb-6">
+            <summary className="text-sm text-slate-600 cursor-pointer">
+              Enter code manually instead
+            </summary>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (inputRef.current?.value) handleScan(inputRef.current.value);
+              }}
+              className="flex gap-2 mt-3"
             >
-              {checking ? "Checking…" : "Check"}
-            </button>
-          </div>
-
-          {error && <p className="scan-error">{error}</p>}
-
-          {checkedAttendee && (
-            <>
-              <DelegatePreview attendee={checkedAttendee} />
-              <button
-                className="primary-btn confirm-entry-btn"
-                onClick={() => confirmForAttendee(checkedAttendee)}
-              >
-                Confirm {CATEGORY_LABEL[category]} Entry
+              <input
+                ref={inputRef}
+                placeholder="Enter serial code"
+                className="flex-1 rounded border border-slate-300 px-3 py-2"
+              />
+              <button className="rounded bg-slate-900 text-white px-4 py-2">
+                Look up
               </button>
-            </>
-          )}
-        </div>
+            </form>
+          </details>
+        </>
       )}
-    </div>
-  );
-}
 
-// ---------- CONFIRMED ----------
+      {loading && <p>Looking up…</p>}
+      {error && <p className="text-red-600">{error}</p>}
 
-function ConfirmedScreen({
-  day,
-  category,
-  attendee,
-  onBackToCategories,
-  onBackToScanner,
-}: {
-  day: Day;
-  category: Category;
-  attendee: Attendee;
-  onBackToCategories: () => void;
-  onBackToScanner: () => void;
-}) {
-  const rows: Category[] = ["kit", "lunch", "highTea", "gala"];
-  const days: Day[] = [1, 2];
+      {attendee && (
+        <div className="rounded-lg border border-slate-200 p-4">
+          <p className="font-medium">{attendee.name}</p>
+          <p className="text-sm text-slate-500 mb-4">
+            {attendee.organization ?? "—"} · {attendee.serial_code}
+          </p>
 
-  return (
-    <div className="screen">
-      <div className="scan-header">
-        <button className="icon-btn" onClick={onBackToCategories} aria-label="Back to categories">
-          <BackArrow />
-        </button>
-      </div>
-
-      <div className="confirm-block">
-        <div className="check-circle">
-          <CheckIcon />
-        </div>
-        <p className="confirm-title">Entry confirmed</p>
-      </div>
-
-      <DelegatePreview attendee={attendee} />
-
-      <div className="table">
-        <div className="table-row table-head">
-          {days.map((d) => (
-            <div key={d} className={`table-cell head-cell ${d === day ? "col-active" : ""}`}>
-              Day {d}
-            </div>
-          ))}
-        </div>
-        {rows.map((c) => (
-          <div className="table-row" key={c}>
-            {days.map((d) => {
-              const key = keyFor(d, c);
-              const status = key === null ? "na" : attendee[key] ? "confirmed" : "pending";
-              const isCurrent = d === day && c === category;
+          <div className="grid gap-2 mb-4">
+            {ITINERARY_ITEMS.map(({ key, label }) => {
+              const done = Boolean(attendee[key]);
               return (
-                <div
-                  key={d}
-                  className={`table-cell ${d === day ? "col-active" : ""} ${
-                    isCurrent ? "cell-current" : ""
+                <button
+                  key={key}
+                  onClick={() => handleMark(key)}
+                  className={`flex justify-between rounded border px-3 py-2 text-left ${
+                    done
+                      ? "bg-green-50 border-green-300"
+                      : "border-slate-300"
                   }`}
                 >
-                  <span className="cell-label">{CATEGORY_LABEL[c]}</span>
-                  <span className={`cell-value cell-${status}`}>
-                    {status === "na" ? "N/A" : status === "confirmed" ? "Confirmed" : "Pending"}
-                  </span>
-                </div>
+                  <span>{label}</span>
+                  <span>{done ? "✓" : ""}</span>
+                </button>
               );
             })}
           </div>
-        ))}
-      </div>
 
-      <button className="primary-btn back-scan-btn" onClick={onBackToScanner}>
-        Scan next
-      </button>
-    </div>
-  );
-}
-
-// ---------- ROOT ----------
-
-export default function ScanPage() {
-  const [day, setDay] = useState<Day>(TODAY);
-  const [screen, setScreen] = useState<"home" | "scan" | "confirmed">("home");
-  const [category, setCategory] = useState<Category | null>(null);
-  const [tab, setTab] = useState<"qr" | "id">("qr");
-  const [idValue, setIdValue] = useState("");
-  const [attendee, setAttendee] = useState<Attendee | null>(null);
-  const [visit, setVisit] = useState(0);
-
-  function pickCategory(c: Category) {
-    setCategory(c);
-    setTab("qr");
-    setIdValue("");
-    setScreen("scan");
-    setVisit((v) => v + 1);
-  }
-
-  function handleConfirmed(a: Attendee) {
-    setAttendee(a);
-    setScreen("confirmed");
-  }
-
-  function backToHome() {
-    setScreen("home");
-    setCategory(null);
-    setAttendee(null);
-  }
-
-  function backToScanner() {
-    setTab("qr");
-    setIdValue("");
-    setAttendee(null);
-    setScreen("scan");
-    setVisit((v) => v + 1);
-  }
-
-  return (
-    <div className="wrap">
-      <style>{`
-        :root {
-          --black: #0A0A0C;
-          --white: #FFFFFF;
-          --blue: #2F5CFF;
-          --blue-dim: #E7ECFF;
-          --grey-50: #F1F1F3;
-          --grey-100: #F5F5F7;
-          --grey-300: #DBDBDF;
-          --grey-500: #8B8B93;
-          --grey-700: #4A4A52;
-        }
-
-        .wrap {
-          min-height: 100vh;
-          width: 100%;
-          background: var(--grey-50);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 32px 16px;
-          font-family: Helvetica, Arial, sans-serif;
-          box-sizing: border-box;
-        }
-
-        .wrap *, .wrap *::before, .wrap *::after {
-          box-sizing: border-box;
-        }
-
-        .phone {
-          width: 390px;
-          max-width: 100%;
-          min-height: 780px;
-          background: var(--white);
-          border-radius: 28px;
-          border: 1px solid var(--grey-300);
-          box-shadow: 0 20px 50px rgba(10,10,12,0.10);
-          overflow: hidden;
-          position: relative;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .screen {
-          padding: 28px 24px 32px;
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          animation: fadein 0.25s ease;
-        }
-
-        @keyframes fadein {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* HOME */
-        .topline { margin-bottom: 28px; }
-        .mark { font-size: 13px; font-weight: 600; color: var(--blue); letter-spacing: 0.01em; }
-        .mark-sub { font-size: 12px; color: var(--grey-500); margin-top: 2px; }
-
-        .day-switch {
-          display: flex;
-          background: var(--grey-100);
-          border-radius: 12px;
-          padding: 4px;
-          gap: 4px;
-          margin-bottom: 32px;
-        }
-        .day-tab {
-          flex: 1;
-          border: none;
-          background: transparent;
-          padding: 9px 0;
-          font-family: inherit;
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--grey-700);
-          border-radius: 9px;
-          cursor: pointer;
-        }
-        .day-tab-active { background: var(--black); color: var(--white); }
-
-        .day-heading { font-size: 40px; font-weight: 700; margin: 0; color: var(--black); line-height: 1.05; }
-        .day-sub { font-size: 14px; color: var(--grey-500); margin: 8px 0 28px; }
-
-        .cat-list { display: flex; flex-direction: column; gap: 12px; }
-        .cat-card {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          background: var(--grey-100);
-          border: 1px solid var(--grey-300);
-          border-radius: 14px;
-          padding: 20px 20px;
-          font-family: inherit;
-          cursor: pointer;
-          text-align: left;
-        }
-        .cat-card:hover { border-color: var(--black); }
-        .cat-card-locked { cursor: default; opacity: 0.6; }
-        .cat-card-locked:hover { border-color: var(--grey-300); }
-        .cat-name { font-size: 17px; font-weight: 600; color: var(--black); }
-        .cat-arrow { color: var(--grey-500); }
-        .pill { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 100px; }
-        .pill-confirmed { background: var(--blue-dim); color: var(--blue); }
-
-        /* SCAN SCREEN */
-        .scan-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
-        .icon-btn { border: none; background: transparent; padding: 4px; margin: -4px; color: var(--black); cursor: pointer; display: flex; }
-        .scan-title { font-size: 21px; font-weight: 600; color: var(--black); margin: 0; }
-
-        .tabs { display: flex; background: var(--grey-100); border-radius: 12px; padding: 4px; margin-bottom: 28px; }
-        .tab { flex: 1; border: none; background: transparent; padding: 10px 0; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--grey-700); border-radius: 9px; cursor: pointer; }
-        .tab-active { background: var(--white); color: var(--black); box-shadow: 0 1px 4px rgba(10,10,12,0.12); }
-
-        .qr-pane { display: flex; flex-direction: column; align-items: center; margin-top: 8px; }
-        .viewfinder {
-          width: 100%;
-          aspect-ratio: 1 / 1;
-          max-width: 280px;
-          background: var(--black);
-          border-radius: 18px;
-          position: relative;
-          overflow: hidden;
-        }
-        .viewfinder-camera { position: absolute; inset: 0; width: 100%; height: 100%; }
-        .viewfinder-camera video, .viewfinder-camera canvas { width: 100% !important; height: 100% !important; object-fit: cover; }
-        .corner { position: absolute; width: 26px; height: 26px; border: 3px solid var(--blue); z-index: 2; pointer-events: none; }
-        .corner-tl { top: 16px; left: 16px; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
-        .corner-tr { top: 16px; right: 16px; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
-        .corner-bl { bottom: 16px; left: 16px; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
-        .corner-br { bottom: 16px; right: 16px; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
-        .scan-line {
-          position: absolute;
-          left: 16px; right: 16px;
-          height: 2px;
-          background: var(--blue);
-          box-shadow: 0 0 8px var(--blue);
-          animation: sweep 0.9s ease-in-out infinite;
-          z-index: 2;
-        }
-        @keyframes sweep {
-          0% { top: 16px; }
-          50% { top: calc(100% - 18px); }
-          100% { top: 16px; }
-        }
-        .qr-help { font-size: 13px; color: var(--grey-500); text-align: center; margin: 18px 0 6px; max-width: 260px; }
-        .qr-help-warn { color: #B45309; }
-        .scan-status { font-size: 13px; color: var(--grey-700); margin: 6px 0 0; }
-        .scan-error { font-size: 13px; color: #D64545; margin: 10px 0 0; text-align: center; }
-
-        .id-pane { display: flex; flex-direction: column; flex: 1; margin-top: 8px; }
-        .id-label { font-size: 13px; color: var(--grey-700); margin-bottom: 8px; font-weight: 500; }
-        .id-row { display: flex; gap: 10px; margin-bottom: 12px; }
-        .id-input-wrap { flex: 1; position: relative; display: flex; align-items: center; }
-        .id-input { width: 100%; font-family: inherit; font-size: 15px; padding: 14px 40px 14px 16px; border: 1px solid var(--grey-300); border-radius: 12px; outline: none; }
-        .id-input:focus { border-color: var(--blue); }
-        .id-check-icon { position: absolute; right: 14px; color: var(--blue); pointer-events: none; }
-        .check-btn { background: var(--black); color: var(--white); border: none; font-family: inherit; font-size: 14px; font-weight: 600; padding: 0 20px; border-radius: 12px; cursor: pointer; white-space: nowrap; }
-        .check-btn:disabled { background: var(--grey-300); color: var(--grey-500); cursor: default; }
-
-        .confirm-entry-btn { margin-top: auto; }
-
-        .primary-btn { background: var(--blue); color: var(--white); border: none; font-family: inherit; font-size: 15px; font-weight: 600; padding: 15px 0; border-radius: 12px; cursor: pointer; }
-        .primary-btn:disabled { background: var(--grey-300); color: var(--grey-500); cursor: default; }
-
-        /* CONFIRMED */
-        .confirm-block { display: flex; flex-direction: column; align-items: center; margin: 12px 0 28px; }
-        .check-circle { color: var(--blue); margin-bottom: 14px; }
-        .confirm-title { font-size: 22px; font-weight: 600; color: var(--black); margin: 0; }
-
-        .delegate-block { margin-bottom: 26px; }
-        .delegate-serial { font-family: inherit; font-size: 12px; color: var(--grey-500); margin: 0 0 10px; letter-spacing: 0.02em; }
-        .delegate-tag { font-size: 12px; color: var(--grey-500); margin: 0 0 4px; }
-        .delegate-name { font-size: 24px; font-weight: 700; color: var(--black); margin: 0 0 6px; }
-        .delegate-role { font-size: 14px; color: var(--grey-700); margin: 0; line-height: 1.5; }
-
-        .table { border: 1px solid var(--grey-300); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }
-        .table-row { display: grid; grid-template-columns: repeat(2, 1fr); }
-        .table-row + .table-row { border-top: 1px solid var(--grey-300); }
-        .table-cell { padding: 12px 10px; border-right: 1px solid var(--grey-300); display: flex; flex-direction: column; gap: 3px; }
-        .table-cell:last-child { border-right: none; }
-        .head-cell { font-size: 12px; font-weight: 600; color: var(--grey-700); background: var(--grey-100); }
-        .col-active { background: var(--blue-dim); }
-        .head-cell.col-active { background: var(--black); color: var(--white); }
-        .cell-label { font-size: 11px; color: var(--grey-500); }
-        .cell-value { font-size: 13px; font-weight: 600; }
-        .cell-confirmed { color: var(--blue); }
-        .cell-pending { color: var(--grey-700); }
-        .cell-na { color: var(--grey-300); }
-        .cell-current .cell-value { text-decoration: underline; text-decoration-color: var(--blue); text-underline-offset: 3px; }
-
-        .back-scan-btn { margin-top: auto; }
-      `}</style>
-
-      <div className="phone">
-        {screen === "home" && <HomeScreen day={day} setDay={setDay} today={TODAY} onPick={pickCategory} />}
-        {screen === "scan" && category && (
-          <ScanScreen
-            key={`scan-${visit}`}
-            day={day}
-            category={category}
-            tab={tab}
-            setTab={setTab}
-            onBack={backToHome}
-            onConfirmed={handleConfirmed}
-            idValue={idValue}
-            setIdValue={setIdValue}
-          />
-        )}
-        {screen === "confirmed" && category && attendee && (
-          <ConfirmedScreen
-            day={day}
-            category={category}
-            attendee={attendee}
-            onBackToCategories={backToHome}
-            onBackToScanner={backToScanner}
-          />
-        )}
-      </div>
-    </div>
+          <button
+            onClick={scanNext}
+            className="w-full rounded bg-slate-900 text-white px-4 py-2"
+          >
+            Scan next attendee
+          </button>
+        </div>
+      )}
+    </main>
   );
 }
