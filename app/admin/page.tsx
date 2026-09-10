@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   Attendee,
   CategorySettings,
@@ -12,16 +13,12 @@ import {
 } from "@/lib/supabaseClient";
 
 // Admin dashboard: toggle which categories are open for scanning, search
-// attendees and see their full status, and export everything as a CSV
-// (opens fine in Excel/Sheets — no extra library needed, unlike a real
-// .xlsx which would mean installing something like `xlsx` on top of
-// everything else this project already had to fight with npm/native
-// deps for).
+// attendees and see their full status, and export as CSV or a real Excel
+// (.xlsx) file — per day or all days — with a headcount summary at the
+// top of each export, meant to be handed straight to the caterer.
 //
-// NOTE: this page has no login/auth gate — same as the rest of the app
-// right now (RLS is wide open). Anyone with the /admin URL can flip
-// category toggles. Fine for a small trusted-organizer setup; worth
-// locking down before handing the URL out more broadly.
+// NOTE: this page is now behind the /login password gate (middleware.ts +
+// app/api/auth/route.ts) rather than being wide open.
 
 // Which itinerary columns belong to which day, for the per-day CSV export
 // (e.g. handing Day 1's lunch/high-tea numbers to the caterer without the
@@ -127,13 +124,24 @@ export default function AdminPage() {
     return totals;
   }, [attendees]);
 
-  // day: 1 | 2 | 3 exports just that day's columns (for the caterer);
-  // omit it for every column. Values are "Done"/"" — never the actual
-  // timestamp — since the caterer just needs a headcount, not timing.
-  function exportCsv(day?: 1 | 2 | 3) {
+  // Shared by both export formats. day: 1 | 2 | 3 restricts to just that
+  // day's columns (for the caterer); omit it for every column. Cell
+  // values are "Done"/"" — never the actual timestamp — since the
+  // caterer just needs a headcount, not timing. The summary block up top
+  // is the total participant count plus a scanned-count per included
+  // category, e.g. "Lunch — Day 1: 320 of 400 scanned".
+  function buildExportSheet(day?: 1 | 2 | 3) {
     const items = day
       ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key))
       : ITINERARY_ITEMS;
+
+    const total = attendees.length;
+    const summary: (string | number)[][] = [
+      [`INDIS 2026 — ${day ? `Day ${day}` : "All days"} export`],
+      [`Total participants: ${total}`],
+      ...items.map((i) => [`${i.label} scanned: ${counts[i.key] ?? 0} of ${total}`]),
+      [],
+    ];
 
     const header = ["serial_code", "name", "organization", ...items.map((i) => i.label)];
     const rows = attendees.map((a) => [
@@ -142,11 +150,28 @@ export default function AdminPage() {
       a.organization ?? "",
       ...items.map((i) => (a[i.key] ? "Done" : "")),
     ]);
-    const suffix = day ? `day${day}` : "all";
+
+    return { summary, header, rows, suffix: day ? `day${day}` : "all" };
+  }
+
+  function exportCsv(day?: 1 | 2 | 3) {
+    const { summary, header, rows, suffix } = buildExportSheet(day);
     downloadCsv(
       `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.csv`,
-      [header, ...rows]
+      [...summary.map((r) => r.map(String)), header, ...rows]
     );
+  }
+
+  function exportXlsx(day?: 1 | 2 | 3) {
+    const { summary, header, rows, suffix } = buildExportSheet(day);
+    const sheetData = [...summary, header, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    // Bold the title + summary lines and widen columns a bit so the sheet
+    // is readable the moment it's opened, not just after manual formatting.
+    ws["!cols"] = [{ wch: 14 }, { wch: 22 }, { wch: 22 }, ...header.slice(3).map(() => ({ wch: 16 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Attendees");
+    XLSX.writeFile(wb, `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   return (
@@ -168,25 +193,73 @@ export default function AdminPage() {
               {attendees.length} attendee{attendees.length === 1 ? "" : "s"} total
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-slate-500 mr-1">Export as CSV:</span>
-            {([1, 2, 3] as const).map((d) => (
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500 mr-1">Export as Excel:</span>
+              {([1, 2, 3] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => exportXlsx(d)}
+                  disabled={loading || attendees.length === 0}
+                  className="rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium px-3 py-2 disabled:opacity-40 hover:border-slate-400"
+                >
+                  Day {d}
+                </button>
+              ))}
               <button
-                key={d}
-                onClick={() => exportCsv(d)}
+                onClick={() => exportXlsx()}
                 disabled={loading || attendees.length === 0}
-                className="rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium px-3 py-2 disabled:opacity-40 hover:border-slate-400"
+                className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
               >
-                Day {d}
+                All days
               </button>
-            ))}
-            <button
-              onClick={() => exportCsv()}
-              disabled={loading || attendees.length === 0}
-              className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
-            >
-              All days
-            </button>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500 mr-1">Export as CSV:</span>
+              {([1, 2, 3] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => exportCsv(d)}
+                  disabled={loading || attendees.length === 0}
+                  className="rounded-lg border border-slate-200 bg-white text-slate-500 text-xs font-medium px-2.5 py-1.5 disabled:opacity-40 hover:border-slate-300"
+                >
+                  Day {d}
+                </button>
+              ))}
+              <button
+                onClick={() => exportCsv()}
+                disabled={loading || attendees.length === 0}
+                className="rounded-lg border border-slate-200 bg-white text-slate-500 text-xs font-medium px-2.5 py-1.5 disabled:opacity-40 hover:border-slate-300"
+              >
+                All days
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Headcount summary */}
+        <div className="mb-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-1">Total participants</p>
+            <p className="text-2xl font-semibold text-slate-900">{attendees.length}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-1">Scanned at least once</p>
+            <p className="text-2xl font-semibold text-slate-900">
+              {attendees.filter((a) => ITINERARY_ITEMS.some((i) => a[i.key])).length}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-1">Not scanned at all</p>
+            <p className="text-2xl font-semibold text-slate-900">
+              {attendees.filter((a) => !ITINERARY_ITEMS.some((i) => a[i.key])).length}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-1">Total scans logged</p>
+            <p className="text-2xl font-semibold text-slate-900">
+              {attendees.reduce((sum, a) => sum + ITINERARY_ITEMS.filter((i) => a[i.key]).length, 0)}
+            </p>
           </div>
         </div>
 
