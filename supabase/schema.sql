@@ -98,3 +98,21 @@ create policy "allow read on app_passwords" on app_passwords
 -- onboarding desk for a walk-in (as opposed to pre-registered before the
 -- event), so admin can see/filter/count them separately.
 alter table attendees add column if not exists is_onspot boolean not null default false;
+
+-- Single-row key/value store for small app-wide settings that aren't
+-- per-category. Currently used for "live_day" — which day (1/2/3) the
+-- volunteer scan flow treats as "today" for the home screen's
+-- open/closed/locked category states. Set from the admin dashboard.
+create table if not exists app_settings (
+  key text primary key,
+  value text not null
+);
+
+insert into app_settings (key, value) values
+  ('live_day', '1')
+on conflict (key) do nothing;
+
+alter table app_settings enable row level security;
+
+create policy "allow all on app_settings" on app_settings
+  for all using (true) with check (true);

@@ -7,15 +7,15 @@ import {
   ItineraryKey,
   getAttendeeBySerial,
   getCategorySettings,
+  getLiveDay,
   markItineraryItem,
 } from "@/lib/supabaseClient";
+import TopNav from "@/components/TopNav";
 
 // ---------------------------------------------------------------------------
-// This screen intentionally mirrors prototype_ui/indis-scan-flow.jsx's look
-// and flow exactly (same components, same CSS), but wired to the real
-// Supabase attendees table instead of mock state. A volunteer first picks
-// a day + category (Kit / Lunch / High Tea / Gala), THEN scans or looks up
-// an attendee — the scan/lookup marks just that one category.
+// This screen mirrors prototype_ui/indis-scan-flow.jsx's look AND flow
+// exactly (same components, same CSS, same day-lock/pill/icon behavior),
+// wired to the real Supabase attendees table instead of mock state.
 //
 // Real event structure (3 days):
 //   Day 1: Conference Kit, Lunch, High Tea
@@ -23,6 +23,11 @@ import {
 //   Day 3: Lunch, High Tea, Gala Dinner
 // keyFor() below maps that day+category shape onto the real Supabase
 // columns (kit_received, lunch_day1..3, high_tea_day1..3, gala_dinner).
+//
+// "Today" (which day is open/closed/locked on the home screen) is no
+// longer hardcoded — it's the admin-set "live day" (see AdminScreen /
+// getLiveDay in lib/supabaseClient.ts), so someone doesn't have to
+// redeploy the app each morning of the conference to advance the day.
 // ---------------------------------------------------------------------------
 
 type Category = "kit" | "lunch" | "highTea" | "gala";
@@ -58,8 +63,6 @@ function keyFor(day: Day, category: Category): ItineraryKey | null {
   return null;
 }
 
-const TODAY: Day = 1; // change to 2 or 3 as the event moves along
-
 const SCANNER_ELEMENT_ID = "reader";
 
 // html5-qrcode's camera start/stop is async, and React's effect-cleanup
@@ -84,13 +87,7 @@ function runExclusive<T>(task: () => Promise<T>): Promise<T> {
 function BackArrow(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M19 12H5M5 12L11 6M5 12L11 18"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M19 12H5M5 12L11 6M5 12L11 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -98,38 +95,81 @@ function BackArrow(props: React.SVGProps<SVGSVGElement>) {
 function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="46" height="46" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M4 12.5L9.5 18L20 6"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M4 12.5L9.5 18L20 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function XMark(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="46" height="46" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function ArrowRight(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M5 12H19M19 12L13 6M19 12L13 18"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M9 5L16 12L9 19" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function LockedTag() {
-  return <span className="pill pill-confirmed">Done</span>;
+function LockIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
 }
 
-function OffTag() {
-  return <span className="pill pill-off">Closed</span>;
+function KitIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M9 8V6a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6 8h12l-1 12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
 }
+
+function LunchIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M6 3v7a2.5 2.5 0 0 0 5 0V3M8.5 3v7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M17 3c-1.7 0-3 2-3 4.5S15.3 12 17 12M17 3v18M17 3c1.7 0 3 2 3 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 10v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TeaIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H17" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 3.5c0 1-1 1-1 2s1 1 1 2M12 3.5c0 1-1 1-1 2s1 1 1 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function GalaIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M6 3c0 4 2.5 6 6 6s6-2 6-6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M12 9v8M9 21h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6 3h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const CATEGORY_ICON: Record<Category, (props: React.SVGProps<SVGSVGElement>) => JSX.Element> = {
+  kit: KitIcon,
+  lunch: LunchIcon,
+  highTea: TeaIcon,
+  gala: GalaIcon,
+};
 
 function DelegatePreview({ attendee }: { attendee: Attendee }) {
   return (
@@ -145,62 +185,42 @@ function DelegatePreview({ attendee }: { attendee: Attendee }) {
 // ---------- HOME ----------
 
 function HomeScreen({
-  day,
-  setDay,
-  today,
+  liveDay,
   onPick,
   categorySettings,
 }: {
-  day: Day;
-  setDay: (d: Day) => void;
-  today: Day;
+  liveDay: Day;
   onPick: (c: Category) => void;
   categorySettings: CategorySettings | null;
 }) {
-  const cats = DAY_CATEGORIES[day];
-  // Days are no longer locked to "today" — volunteers can scan any day's
-  // categories at any time (e.g. catching up a late arrival on Day 1
-  // while the event is on Day 2). Only an admin-disabled category locks.
+  // No day picker here on purpose — showing every day's categories (with
+  // past/future/locked states) invited volunteers to scan the wrong day.
+  // The admin sets one "live day" and this screen only ever shows that
+  // day's categories, gated solely by the admin on/off toggle.
+  const cats = DAY_CATEGORIES[liveDay];
 
   return (
     <div className="screen home">
-      <div className="topline">
-        <div className="mark">INDIS 2026</div>
-        <div className="mark-sub">Volunteer scan</div>
+      <div className="home-live-day-row">
+        <span className="pill home-live-day-pill">Day {liveDay}</span>
       </div>
-
-      <div className="day-switch">
-        {([1, 2, 3] as Day[]).map((d) => (
-          <button
-            key={d}
-            className={`day-tab ${d === day ? "day-tab-active" : ""}`}
-            onClick={() => setDay(d)}
-          >
-            Day {d}
-          </button>
-        ))}
-      </div>
-
-      <h1 className="day-heading">Day {String(day).padStart(2, "0")}</h1>
-      <p className="day-sub">Select what you're scanning for</p>
-
       <div className="cat-list">
         {cats.map((c) => {
-          const itemKey = keyFor(day, c);
-          // Admin turned this off in the dashboard. A category with no
-          // itemKey (doesn't apply to this day) is never selectable
-          // anyway via DAY_CATEGORIES, so this only affects real ones.
-          const closedByAdmin = Boolean(itemKey && categorySettings && !categorySettings[itemKey]);
-          const selectable = !closedByAdmin;
+          const itemKey = keyFor(liveDay, c);
+          const enabled = !itemKey || !categorySettings || categorySettings[itemKey] !== false;
+          const Icon = CATEGORY_ICON[c];
           return (
             <button
               key={c}
-              className={`cat-card ${!selectable ? "cat-card-locked" : ""}`}
-              onClick={() => selectable && onPick(c)}
-              disabled={!selectable}
+              className={`cat-card ${!enabled ? "cat-card-locked" : ""}`}
+              onClick={() => enabled && onPick(c)}
+              disabled={!enabled}
             >
+              <span className="cat-icon">
+                <Icon />
+              </span>
               <span className="cat-name">{CATEGORY_LABEL[c]}</span>
-              {closedByAdmin ? <OffTag /> : <ArrowRight className="cat-arrow" />}
+              {!enabled ? <span className="pill pill-closed">Paused</span> : <ArrowRight className="cat-arrow" />}
             </button>
           );
         })}
@@ -233,7 +253,7 @@ function ScanScreen({
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkedAttendee, setCheckedAttendee] = useState<Attendee | null>(null);
   const scannerRef = useRef<any>(null);
@@ -249,7 +269,7 @@ function ScanScreen({
 
   async function confirmForAttendee(attendee: Attendee) {
     if (!itemKey) {
-      setError(`${CATEGORY_LABEL[category]} isn't tracked on Day ${day}.`);
+      setNotFound(`${CATEGORY_LABEL[category]} isn't tracked on Day ${day}.`);
       return;
     }
     const alreadyDone = Boolean(attendee[itemKey]);
@@ -274,14 +294,14 @@ function ScanScreen({
       decodedOnceRef.current = false;
       return;
     }
-    setError(null);
+    setNotFound(null);
     setStatus("Looking up…");
     try {
       const attendee = await getAttendeeBySerial(trimmed);
       await stopScanner();
       await confirmForAttendee(attendee);
     } catch {
-      setError("No attendee found for that code.");
+      setNotFound("ID not found, Check again or try scanning QR again.");
       decodedOnceRef.current = false; // let them try again (camera is still running)
     } finally {
       setStatus(null);
@@ -291,12 +311,12 @@ function ScanScreen({
   async function runCheck() {
     if (checking || !idValue.trim()) return;
     setChecking(true);
-    setError(null);
+    setNotFound(null);
     try {
       const attendee = await getAttendeeBySerial(idValue.trim());
       setCheckedAttendee(attendee);
     } catch {
-      setError("No attendee found for that code.");
+      setNotFound("ID not found, Check again or try scanning QR again.");
       setCheckedAttendee(null);
     } finally {
       setChecking(false);
@@ -305,6 +325,7 @@ function ScanScreen({
 
   function handleIdChange(e: React.ChangeEvent<HTMLInputElement>) {
     setIdValue(e.target.value);
+    if (notFound) setNotFound(null);
     if (checkedAttendee) setCheckedAttendee(null);
   }
 
@@ -356,7 +377,7 @@ function ScanScreen({
         setScannerActive(true);
       } catch {
         setScannerActive(false);
-        setCameraError("Couldn't access the camera. Use manual entry below instead.");
+        setCameraError("Couldn't access the camera. Use the ID tab below instead.");
       }
     });
   }
@@ -414,13 +435,16 @@ function ScanScreen({
         </h1>
       </div>
 
-      <div className="tabs">
-        <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => setTab("qr")}>
-          QR
-        </button>
-        <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => setTab("id")}>
-          ID
-        </button>
+      <div className="tab-row-wrap">
+        <div className="tabs">
+          <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => setTab("qr")}>
+            QR
+          </button>
+          <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => setTab("id")}>
+            ID
+          </button>
+        </div>
+        <div className="tab-row-baseline" />
       </div>
 
       {tab === "qr" ? (
@@ -438,43 +462,53 @@ function ScanScreen({
           ) : (
             <p className="qr-help">Align the QR on the delegate's badge within the frame</p>
           )}
-          {status && <p className="scan-status">{status}</p>}
-          {error && <p className="scan-error">{error}</p>}
+          {status && <p className="qr-help">{status}</p>}
+          {notFound && (
+            <div className="id-error-box">
+              <XMark width="16" height="16" className="id-error-icon" />
+              <p className="id-error-text">{notFound}</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="id-pane">
           <label className="id-label" htmlFor="delegate-id">
             Delegate ID
           </label>
-          <div className="id-row">
-            <div className="id-input-wrap">
-              <input
-                id="delegate-id"
-                className="id-input"
-                placeholder="Enter unique ID"
-                value={idValue}
-                onChange={handleIdChange}
-              />
-              {checkedAttendee && <CheckIcon className="id-check-icon" width="16" height="16" />}
+          <div className="id-action-group">
+            <div className="id-row">
+              <div className="id-input-wrap">
+                <input
+                  id="delegate-id"
+                  className="id-input"
+                  placeholder="Enter unique ID"
+                  value={idValue}
+                  onChange={handleIdChange}
+                />
+              </div>
+              <button
+                className="check-btn"
+                onClick={runCheck}
+                disabled={!idValue.trim() || checking || Boolean(checkedAttendee)}
+              >
+                {checking ? "Checking…" : "Check"}
+              </button>
             </div>
-            <button
-              className="check-btn"
-              onClick={runCheck}
-              disabled={!idValue.trim() || checking || Boolean(checkedAttendee)}
-            >
-              {checking ? "Checking…" : "Check"}
-            </button>
-          </div>
 
-          {error && <p className="scan-error">{error}</p>}
+            {notFound && (
+              <div className="id-error-box">
+                <XMark width="16" height="16" className="id-error-icon" />
+                <p className="id-error-text">{notFound}</p>
+              </div>
+            )}
+          </div>
 
           {checkedAttendee && (
             <>
-              <DelegatePreview attendee={checkedAttendee} />
-              <button
-                className="primary-btn confirm-entry-btn"
-                onClick={() => confirmForAttendee(checkedAttendee)}
-              >
+              <div className="delegate-card">
+                <DelegatePreview attendee={checkedAttendee} />
+              </div>
+              <button className="primary-btn confirm-back-btn" onClick={() => confirmForAttendee(checkedAttendee)}>
                 Confirm {CATEGORY_LABEL[category]} Entry
               </button>
             </>
@@ -491,17 +525,18 @@ function ConfirmedScreen({
   day,
   category,
   attendee,
+  confirmedAt,
   onBackToCategories,
   onBackToScanner,
 }: {
   day: Day;
   category: Category;
   attendee: Attendee;
+  confirmedAt: Date | null;
   onBackToCategories: () => void;
   onBackToScanner: () => void;
 }) {
-  const rows: Category[] = ["kit", "lunch", "highTea", "gala"];
-  const days: Day[] = [1, 2, 3];
+  const timeLabel = confirmedAt ? confirmedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 
   return (
     <div className="screen">
@@ -513,46 +548,20 @@ function ConfirmedScreen({
 
       <div className="confirm-block">
         <div className="check-circle">
-          <CheckIcon />
+          <CheckIcon width="30" height="30" />
         </div>
+        <p className="confirm-context">
+          Day {day}, {CATEGORY_LABEL[category]}
+        </p>
         <p className="confirm-title">Entry confirmed</p>
+        {timeLabel && <p className="confirm-time">at {timeLabel}</p>}
       </div>
 
-      <DelegatePreview attendee={attendee} />
-
-      <div className="table">
-        <div className="table-row table-head">
-          {days.map((d) => (
-            <div key={d} className={`table-cell head-cell ${d === day ? "col-active" : ""}`}>
-              Day {d}
-            </div>
-          ))}
-        </div>
-        {rows.map((c) => (
-          <div className="table-row" key={c}>
-            {days.map((d) => {
-              const key = keyFor(d, c);
-              const status = key === null ? "na" : attendee[key] ? "confirmed" : "pending";
-              const isCurrent = d === day && c === category;
-              return (
-                <div
-                  key={d}
-                  className={`table-cell ${d === day ? "col-active" : ""} ${
-                    isCurrent ? "cell-current" : ""
-                  }`}
-                >
-                  <span className="cell-label">{CATEGORY_LABEL[c]}</span>
-                  <span className={`cell-value cell-${status}`}>
-                    {status === "na" ? "N/A" : status === "confirmed" ? "Confirmed" : "Pending"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+      <div className="delegate-card">
+        <DelegatePreview attendee={attendee} />
       </div>
 
-      <button className="primary-btn back-scan-btn" onClick={onBackToScanner}>
+      <button className="primary-btn confirm-back-btn" onClick={onBackToScanner}>
         Scan next
       </button>
     </div>
@@ -562,12 +571,13 @@ function ConfirmedScreen({
 // ---------- ROOT ----------
 
 export default function ScanPage() {
-  const [day, setDay] = useState<Day>(TODAY);
+  const [liveDay, setLiveDay] = useState<Day>(1);
   const [screen, setScreen] = useState<"home" | "scan" | "confirmed">("home");
   const [category, setCategory] = useState<Category | null>(null);
   const [tab, setTab] = useState<"qr" | "id">("qr");
   const [idValue, setIdValue] = useState("");
   const [attendee, setAttendee] = useState<Attendee | null>(null);
+  const [confirmedAt, setConfirmedAt] = useState<Date | null>(null);
   const [visit, setVisit] = useState(0);
   const [categorySettings, setCategorySettings] = useState<CategorySettings | null>(null);
 
@@ -579,11 +589,16 @@ export default function ScanPage() {
         // "everything open" rather than blocking the whole scanner.
         setCategorySettings(null);
       });
+    getLiveDay()
+      .then(setLiveDay)
+      .catch(() => {
+        // app_settings table missing/unreachable — default to Day 1.
+      });
   }, []);
 
   function pickCategory(c: Category) {
-    const itemKey = keyFor(day, c);
-    if (itemKey && categorySettings && !categorySettings[itemKey]) {
+    const itemKey = keyFor(liveDay, c);
+    if (itemKey && categorySettings && categorySettings[itemKey] === false) {
       // Shouldn't normally happen (the card is disabled), but guards
       // against a stale render if the admin flips a toggle mid-visit.
       return;
@@ -597,6 +612,7 @@ export default function ScanPage() {
 
   function handleConfirmed(a: Attendee) {
     setAttendee(a);
+    setConfirmedAt(new Date());
     setScreen("confirmed");
   }
 
@@ -616,235 +632,36 @@ export default function ScanPage() {
 
   return (
     <div className="wrap">
-      <style>{`
-        :root {
-          --black: #0A0A0C;
-          --white: #FFFFFF;
-          --blue: #2F5CFF;
-          --blue-dim: #E7ECFF;
-          --grey-50: #F1F1F3;
-          --grey-100: #F5F5F7;
-          --grey-300: #DBDBDF;
-          --grey-500: #8B8B93;
-          --grey-700: #4A4A52;
-        }
-
-        .wrap {
-          min-height: 100vh;
-          width: 100%;
-          background: var(--grey-50);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 32px 16px;
-          font-family: Helvetica, Arial, sans-serif;
-          box-sizing: border-box;
-        }
-
-        .wrap *, .wrap *::before, .wrap *::after {
-          box-sizing: border-box;
-        }
-
-        .phone {
-          width: 390px;
-          max-width: 100%;
-          min-height: 780px;
-          background: var(--white);
-          border-radius: 28px;
-          border: 1px solid var(--grey-300);
-          box-shadow: 0 20px 50px rgba(10,10,12,0.10);
-          overflow: hidden;
-          position: relative;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .screen {
-          padding: 28px 24px 32px;
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          animation: fadein 0.25s ease;
-        }
-
-        @keyframes fadein {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* HOME */
-        .topline { margin-bottom: 28px; }
-        .mark { font-size: 13px; font-weight: 600; color: var(--blue); letter-spacing: 0.01em; }
-        .mark-sub { font-size: 12px; color: var(--grey-500); margin-top: 2px; }
-
-        .day-switch {
-          display: flex;
-          background: var(--grey-100);
-          border-radius: 12px;
-          padding: 4px;
-          gap: 4px;
-          margin-bottom: 32px;
-        }
-        .day-tab {
-          flex: 1;
-          border: none;
-          background: transparent;
-          padding: 9px 0;
-          font-family: inherit;
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--grey-700);
-          border-radius: 9px;
-          cursor: pointer;
-        }
-        .day-tab-active { background: var(--black); color: var(--white); }
-
-        .day-heading { font-size: 40px; font-weight: 700; margin: 0; color: var(--black); line-height: 1.05; }
-        .day-sub { font-size: 14px; color: var(--grey-500); margin: 8px 0 28px; }
-
-        .cat-list { display: flex; flex-direction: column; gap: 12px; }
-        .cat-card {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          background: var(--grey-100);
-          border: 1px solid var(--grey-300);
-          border-radius: 14px;
-          padding: 20px 20px;
-          font-family: inherit;
-          cursor: pointer;
-          text-align: left;
-        }
-        .cat-card:hover { border-color: var(--black); }
-        .cat-card-locked { cursor: default; opacity: 0.6; }
-        .cat-card-locked:hover { border-color: var(--grey-300); }
-        .cat-name { font-size: 17px; font-weight: 600; color: var(--black); }
-        .cat-arrow { color: var(--grey-500); }
-        .pill { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 100px; }
-        .pill-confirmed { background: var(--blue-dim); color: var(--blue); }
-        .pill-off { background: var(--grey-300); color: var(--grey-700); }
-
-        /* SCAN SCREEN */
-        .scan-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
-        .icon-btn { border: none; background: transparent; padding: 4px; margin: -4px; color: var(--black); cursor: pointer; display: flex; }
-        .scan-title { font-size: 21px; font-weight: 600; color: var(--black); margin: 0; }
-
-        .tabs { display: flex; background: var(--grey-100); border-radius: 12px; padding: 4px; margin-bottom: 28px; }
-        .tab { flex: 1; border: none; background: transparent; padding: 10px 0; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--grey-700); border-radius: 9px; cursor: pointer; }
-        .tab-active { background: var(--white); color: var(--black); box-shadow: 0 1px 4px rgba(10,10,12,0.12); }
-
-        .qr-pane { display: flex; flex-direction: column; align-items: center; margin-top: 8px; }
-        .viewfinder {
-          width: 100%;
-          aspect-ratio: 1 / 1;
-          max-width: 280px;
-          background: var(--black);
-          border-radius: 18px;
-          position: relative;
-          overflow: hidden;
-        }
-        .viewfinder-camera { position: absolute; inset: 0; width: 100%; height: 100%; }
-        .viewfinder-camera video, .viewfinder-camera canvas { width: 100% !important; height: 100% !important; object-fit: cover; }
-        .corner { position: absolute; width: 26px; height: 26px; border: 3px solid var(--blue); z-index: 2; pointer-events: none; }
-        .corner-tl { top: 16px; left: 16px; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
-        .corner-tr { top: 16px; right: 16px; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
-        .corner-bl { bottom: 16px; left: 16px; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
-        .corner-br { bottom: 16px; right: 16px; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
-        .scan-line {
-          position: absolute;
-          left: 16px; right: 16px;
-          height: 2px;
-          background: var(--blue);
-          box-shadow: 0 0 8px var(--blue);
-          animation: sweep 0.9s ease-in-out infinite;
-          z-index: 2;
-        }
-        @keyframes sweep {
-          0% { top: 16px; }
-          50% { top: calc(100% - 18px); }
-          100% { top: 16px; }
-        }
-        .qr-help { font-size: 13px; color: var(--grey-500); text-align: center; margin: 18px 0 6px; max-width: 260px; }
-        .qr-help-warn { color: #B45309; }
-        .scan-status { font-size: 13px; color: var(--grey-700); margin: 6px 0 0; }
-        .scan-error { font-size: 13px; color: #D64545; margin: 10px 0 0; text-align: center; }
-
-        .id-pane { display: flex; flex-direction: column; flex: 1; margin-top: 8px; }
-        .id-label { font-size: 13px; color: var(--grey-700); margin-bottom: 8px; font-weight: 500; }
-        .id-row { display: flex; gap: 10px; margin-bottom: 12px; }
-        .id-input-wrap { flex: 1; position: relative; display: flex; align-items: center; }
-        .id-input { width: 100%; font-family: inherit; font-size: 15px; padding: 14px 40px 14px 16px; border: 1px solid var(--grey-300); border-radius: 12px; outline: none; }
-        .id-input:focus { border-color: var(--blue); }
-        .id-check-icon { position: absolute; right: 14px; color: var(--blue); pointer-events: none; }
-        .check-btn { background: var(--black); color: var(--white); border: none; font-family: inherit; font-size: 14px; font-weight: 600; padding: 0 20px; border-radius: 12px; cursor: pointer; white-space: nowrap; }
-        .check-btn:disabled { background: var(--grey-300); color: var(--grey-500); cursor: default; }
-
-        .confirm-entry-btn { margin-top: auto; }
-
-        .primary-btn { background: var(--blue); color: var(--white); border: none; font-family: inherit; font-size: 15px; font-weight: 600; padding: 15px 0; border-radius: 12px; cursor: pointer; }
-        .primary-btn:disabled { background: var(--grey-300); color: var(--grey-500); cursor: default; }
-
-        /* CONFIRMED */
-        .confirm-block { display: flex; flex-direction: column; align-items: center; margin: 12px 0 28px; }
-        .check-circle { color: var(--blue); margin-bottom: 14px; }
-        .confirm-title { font-size: 22px; font-weight: 600; color: var(--black); margin: 0; }
-
-        .delegate-block { margin-bottom: 26px; }
-        .delegate-serial { font-family: inherit; font-size: 12px; color: var(--grey-500); margin: 0 0 10px; letter-spacing: 0.02em; }
-        .delegate-tag { font-size: 12px; color: var(--grey-500); margin: 0 0 4px; }
-        .delegate-name { font-size: 24px; font-weight: 700; color: var(--black); margin: 0 0 6px; }
-        .delegate-role { font-size: 14px; color: var(--grey-700); margin: 0; line-height: 1.5; }
-
-        .table { border: 1px solid var(--grey-300); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }
-        .table-row { display: grid; grid-template-columns: repeat(3, 1fr); }
-        .table-row + .table-row { border-top: 1px solid var(--grey-300); }
-        .table-cell { padding: 12px 10px; border-right: 1px solid var(--grey-300); display: flex; flex-direction: column; gap: 3px; }
-        .table-cell:last-child { border-right: none; }
-        .head-cell { font-size: 12px; font-weight: 600; color: var(--grey-700); background: var(--grey-100); }
-        .col-active { background: var(--blue-dim); }
-        .head-cell.col-active { background: var(--black); color: var(--white); }
-        .cell-label { font-size: 11px; color: var(--grey-500); }
-        .cell-value { font-size: 13px; font-weight: 600; }
-        .cell-confirmed { color: var(--blue); }
-        .cell-pending { color: var(--grey-700); }
-        .cell-na { color: var(--grey-300); }
-        .cell-current .cell-value { text-decoration: underline; text-decoration-color: var(--blue); text-underline-offset: 3px; }
-
-        .back-scan-btn { margin-top: auto; }
-      `}</style>
-
       <div className="phone">
-        {screen === "home" && (
-          <HomeScreen
-            day={day}
-            setDay={setDay}
-            today={TODAY}
-            onPick={pickCategory}
-            categorySettings={categorySettings}
-          />
-        )}
-        {screen === "scan" && category && (
-          <ScanScreen
-            key={`scan-${visit}`}
-            day={day}
-            category={category}
-            tab={tab}
-            setTab={setTab}
-            onBack={backToHome}
-            onConfirmed={handleConfirmed}
-            idValue={idValue}
-            setIdValue={setIdValue}
-          />
-        )}
-        {screen === "confirmed" && category && attendee && (
-          <ConfirmedScreen
-            day={day}
-            category={category}
-            attendee={attendee}
-            onBackToCategories={backToHome}
-            onBackToScanner={backToScanner}
-          />
-        )}
+        <TopNav />
+        <div className="app-body">
+          {screen === "home" && (
+            <HomeScreen liveDay={liveDay} onPick={pickCategory} categorySettings={categorySettings} />
+          )}
+          {screen === "scan" && category && (
+            <ScanScreen
+              key={`scan-${visit}`}
+              day={liveDay}
+              category={category}
+              tab={tab}
+              setTab={setTab}
+              onBack={backToHome}
+              onConfirmed={handleConfirmed}
+              idValue={idValue}
+              setIdValue={setIdValue}
+            />
+          )}
+          {screen === "confirmed" && category && attendee && (
+            <ConfirmedScreen
+              day={liveDay}
+              category={category}
+              attendee={attendee}
+              confirmedAt={confirmedAt}
+              onBackToCategories={backToHome}
+              onBackToScanner={backToScanner}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

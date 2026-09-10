@@ -1,0 +1,484 @@
+<title>Scan Flow Preview</title>
+<style>
+  :root {
+    --ground: #F1F1F3;
+    --card: #FFFFFF;
+    --card-2: #F5F5F7;
+    --border: #DBDBDF;
+    --ink: #0A0A0C;
+    --ink-dim: #4A4A52;
+    --muted: #8B8B93;
+    --accent: #2F5CFF;
+    --accent-dim: #E7ECFF;
+    --amber: #B45309;
+    --shadow: rgba(10,10,12,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14151A;
+      --card: #1D1F26;
+      --card-2: #23252D;
+      --border: #33353F;
+      --ink: #F2F2F5;
+      --ink-dim: #C7C8D1;
+      --muted: #86899A;
+      --accent: #5C82FF;
+      --accent-dim: #23294A;
+      --amber: #E0A458;
+      --shadow: rgba(0,0,0,0.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #14151A;
+    --card: #1D1F26;
+    --card-2: #23252D;
+    --border: #33353F;
+    --ink: #F2F2F5;
+    --ink-dim: #C7C8D1;
+    --muted: #86899A;
+    --accent: #5C82FF;
+    --accent-dim: #23294A;
+    --amber: #E0A458;
+    --shadow: rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 32px 16px;
+    padding-block: 32px;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+
+  .page-head {
+    text-align: center;
+    max-width: 480px;
+  }
+  .page-eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+  .page-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .page-sub {
+    font-size: 13.5px;
+    color: var(--muted);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .stage {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .phone {
+    width: 340px;
+    max-width: 100%;
+    min-height: 640px;
+    background: var(--card);
+    border-radius: 26px;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 46px var(--shadow);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .screen {
+    padding: 24px 20px 26px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    animation: fadein .28s ease;
+  }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .screen, .scan-line { animation: none !important; }
+  }
+
+  .topline { margin-bottom: 22px; }
+  .mark { font-size: 12.5px; font-weight: 700; color: var(--accent); letter-spacing: 0.01em; }
+  .mark-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  .day-switch { display: flex; background: var(--card-2); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 26px; }
+  .day-tab { flex: 1; border: none; background: transparent; padding: 8px 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-dim); border-radius: 9px; cursor: pointer; }
+  .day-tab-active { background: var(--ink); color: var(--card); }
+  :root[data-theme="dark"] .day-tab-active, @media (prefers-color-scheme: dark) { }
+
+  .day-heading { font-size: 34px; font-weight: 700; margin: 0; color: var(--ink); line-height: 1.05; }
+  .day-sub { font-size: 13px; color: var(--muted); margin: 8px 0 22px; }
+
+  .cat-list { display: flex; flex-direction: column; gap: 10px; }
+  .cat-card {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--card-2); border: 1px solid var(--border); border-radius: 14px;
+    padding: 17px 18px; font: inherit; cursor: pointer; text-align: left; color: var(--ink);
+    transition: border-color .15s;
+  }
+  .cat-card:hover { border-color: var(--accent); }
+  .cat-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cat-card-locked { cursor: default; opacity: 0.55; }
+  .cat-card-locked:hover { border-color: var(--border); }
+  .cat-name { font-size: 15.5px; font-weight: 600; }
+  .cat-arrow { color: var(--muted); flex-shrink: 0; }
+  .pill { font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 100px; white-space: nowrap; }
+  .pill-off { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
+
+  .scan-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .icon-btn { border: none; background: transparent; padding: 4px; margin: -4px; color: var(--ink); cursor: pointer; display: flex; border-radius: 8px; }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .scan-title { font-size: 18.5px; font-weight: 600; color: var(--ink); margin: 0; }
+
+  .tabs { display: flex; background: var(--card-2); border-radius: 12px; padding: 4px; margin-bottom: 22px; }
+  .tab { flex: 1; border: none; background: transparent; padding: 9px 0; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink-dim); border-radius: 9px; cursor: pointer; }
+  .tab-active { background: var(--card); color: var(--ink); box-shadow: 0 1px 4px var(--shadow); }
+
+  .qr-pane { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
+  .viewfinder { width: 100%; aspect-ratio: 1/1; max-width: 230px; background: #0A0A0C; border-radius: 16px; position: relative; overflow: hidden; }
+  .corner { position: absolute; width: 24px; height: 24px; border: 3px solid var(--accent); }
+  .corner-tl { top: 14px; left: 14px; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
+  .corner-tr { top: 14px; right: 14px; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
+  .corner-bl { bottom: 14px; left: 14px; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
+  .corner-br { bottom: 14px; right: 14px; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
+  .scan-line { position: absolute; left: 14px; right: 14px; height: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: sweep .9s ease-in-out infinite; }
+  @keyframes sweep { 0% { top: 14px; } 50% { top: calc(100% - 16px); } 100% { top: 14px; } }
+  .qr-help { font-size: 12.5px; color: var(--muted); text-align: center; margin: 16px 0 20px; max-width: 250px; }
+  .demo-btn { border: 1px dashed var(--muted); background: transparent; color: var(--ink-dim); font: inherit; font-size: 12.5px; font-weight: 600; padding: 11px 18px; border-radius: 10px; cursor: pointer; }
+  .demo-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .id-pane { display: flex; flex-direction: column; flex: 1; margin-top: 6px; }
+  .id-label { font-size: 12.5px; color: var(--ink-dim); margin-bottom: 8px; font-weight: 600; }
+  .id-row { display: flex; gap: 8px; margin-bottom: 18px; }
+  .id-input-wrap { flex: 1; position: relative; display: flex; align-items: center; }
+  .id-input { width: 100%; font: inherit; font-size: 14.5px; padding: 13px 38px 13px 14px; border: 1px solid var(--border); border-radius: 12px; outline: none; background: var(--card); color: var(--ink); }
+  .id-input:focus { border-color: var(--accent); }
+  .id-check-icon { position: absolute; right: 12px; color: var(--accent); pointer-events: none; }
+  .check-btn { background: var(--ink); color: var(--card); border: none; font: inherit; font-size: 13.5px; font-weight: 700; padding: 0 18px; border-radius: 12px; cursor: pointer; white-space: nowrap; }
+  .check-btn:disabled { background: var(--border); color: var(--muted); cursor: default; }
+
+  .confirm-entry-btn { margin-top: auto; }
+  .primary-btn { background: var(--accent); color: #fff; border: none; font: inherit; font-size: 14.5px; font-weight: 700; padding: 14px 0; border-radius: 12px; cursor: pointer; }
+  .primary-btn:disabled { background: var(--border); color: var(--muted); cursor: default; }
+  .primary-btn:focus-visible, .demo-btn:focus-visible, .check-btn:focus-visible, .tab:focus-visible, .day-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .confirm-block { display: flex; flex-direction: column; align-items: center; margin: 10px 0 22px; }
+  .check-circle { color: var(--accent); margin-bottom: 12px; }
+  .confirm-title { font-size: 19px; font-weight: 700; color: var(--ink); margin: 0; }
+
+  .delegate-block { margin-bottom: 20px; }
+  .delegate-serial { font: inherit; font-size: 11.5px; color: var(--muted); margin: 0 0 8px; letter-spacing: 0.02em; }
+  .delegate-tag { font-size: 11.5px; color: var(--muted); margin: 0 0 4px; }
+  .delegate-name { font-size: 21px; font-weight: 700; color: var(--ink); margin: 0 0 4px; }
+  .delegate-role { font-size: 13px; color: var(--ink-dim); margin: 0; line-height: 1.5; }
+
+  .table { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; margin-bottom: 20px; }
+  .table-row { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .table-row + .table-row { border-top: 1px solid var(--border); }
+  .table-cell { padding: 10px 8px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+  .table-cell:last-child { border-right: none; }
+  .head-cell { font-size: 11px; font-weight: 700; color: var(--ink-dim); background: var(--card-2); }
+  .col-active { background: var(--accent-dim); }
+  .head-cell.col-active { background: var(--ink); color: var(--card); }
+  .cell-label { font-size: 10px; color: var(--muted); }
+  .cell-value { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cell-confirmed { color: var(--accent); }
+  .cell-pending { color: var(--ink-dim); }
+  .cell-na { color: var(--border); }
+  .cell-current .cell-value { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+
+  .back-scan-btn { margin-top: auto; }
+
+  .caption-card {
+    width: 340px; max-width: 100%;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px 18px; font-size: 12.5px; color: var(--ink-dim); line-height: 1.55;
+  }
+  .caption-card b { color: var(--ink); }
+  .caption-card .step { display: flex; gap: 8px; margin-bottom: 8px; }
+  .caption-card .step:last-child { margin-bottom: 0; }
+  .step-num {
+    flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent-dim); color: var(--accent); font-size: 10.5px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+</style>
+
+<div class="page">
+  <div class="page-head">
+    <p class="page-eyebrow">INDIS 2026 · Volunteer Scan</p>
+    <h1 class="page-title">Badge-scan flow preview</h1>
+    <p class="page-sub">A click-through of the live /scan screen with sample data — pick a category, "scan" the demo badge, and see the confirmation table update.</p>
+  </div>
+
+  <div class="stage">
+    <div class="phone">
+      <div id="screen-root" class="screen"></div>
+    </div>
+    <div class="caption-card" id="caption-card"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var CATEGORY_LABEL = { kit: "Conference Kit", lunch: "Lunch", highTea: "High Tea", gala: "Gala Dinner" };
+  var DAY_CATEGORIES = { 1: ["kit", "lunch", "highTea"], 2: ["lunch", "highTea"], 3: ["lunch", "highTea", "gala"] };
+  var DELEGATE = { serial: "IND-2026-0842", name: "Ananya Rao", role: "Delegate", org: "IIT Guwahati" };
+
+  function keyFor(day, cat) {
+    if (cat === "kit") return day === 1 ? "kit_received" : null;
+    if (cat === "gala") return day === 3 ? "gala_dinner" : null;
+    return cat + "_" + day;
+  }
+
+  var state = {
+    day: 1,
+    screen: "home",
+    category: null,
+    tab: "qr",
+    idValue: "",
+    checked: false,
+    scanning: false,
+    scans: {} // key -> true
+  };
+
+  var CAPTIONS = {
+    home: {
+      title: "1 · Home",
+      steps: [
+        "Volunteer picks the day tab.",
+        "Every category for that day is open — none are locked by day anymore, only an admin toggle can close one.",
+        "Tapping a category opens the scanner for it."
+      ]
+    },
+    "scan-qr": {
+      title: "2 · Scan (QR)",
+      steps: [
+        "Camera viewfinder is live in the real app — this preview simulates a decode.",
+        "A successful scan looks up the badge's serial code in Supabase.",
+        "Click “Simulate scan” to continue."
+      ]
+    },
+    "scan-id": {
+      title: "2 · Scan (manual ID)",
+      steps: [
+        "Fallback when a badge won't scan — type the serial code instead.",
+        "“Check” looks the attendee up and shows their card.",
+        "“Confirm entry” marks this category done."
+      ]
+    },
+    confirmed: {
+      title: "3 · Confirmed",
+      steps: [
+        "The full 3-day table shows this delegate's whole itinerary, not just what was just scanned.",
+        "The current day's column and the just-scanned cell are highlighted.",
+        "“Scan next” returns to this same category, ready for the next badge."
+      ]
+    }
+  };
+
+  function renderCaption(key) {
+    var c = CAPTIONS[key];
+    var el = document.getElementById("caption-card");
+    if (!c) { el.innerHTML = ""; return; }
+    var html = "<b>" + c.title + "</b><div style='margin-top:10px'>";
+    c.steps.forEach(function (s, i) {
+      html += "<div class='step'><span class='step-num'>" + (i + 1) + "</span><span>" + s + "</span></div>";
+    });
+    html += "</div>";
+    el.innerHTML = html;
+  }
+
+  function svg(name) {
+    if (name === "back") return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M5 12L11 6M5 12L11 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    if (name === "check") return '<svg width="42" height="42" viewBox="0 0 24 24" fill="none"><path d="M4 12.5L9.5 18L20 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    if (name === "check-sm") return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 12.5L9.5 18L20 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    if (name === "arrow") return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12H19M19 12L13 6M19 12L13 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function delegateBlock() {
+    return '<div class="delegate-block">' +
+      '<p class="delegate-serial">' + DELEGATE.serial + '</p>' +
+      '<p class="delegate-tag">Delegate</p>' +
+      '<p class="delegate-name">' + DELEGATE.name + '</p>' +
+      '<p class="delegate-role">' + DELEGATE.role + ' · ' + DELEGATE.org + '</p>' +
+    '</div>';
+  }
+
+  function renderHome() {
+    renderCaption("home");
+    var cats = DAY_CATEGORIES[state.day];
+    var tabs = [1, 2, 3].map(function (d) {
+      return '<button class="day-tab ' + (d === state.day ? "day-tab-active" : "") + '" data-day="' + d + '">Day ' + d + '</button>';
+    }).join("");
+    var cards = cats.map(function (c) {
+      var key = keyFor(state.day, c);
+      var done = key && state.scans[key];
+      return '<button class="cat-card" data-cat="' + c + '">' +
+        '<span class="cat-name">' + CATEGORY_LABEL[c] + '</span>' +
+        (done ? '<span class="pill pill-off" style="color:var(--accent);border-color:var(--accent-dim);background:var(--accent-dim)">Done</span>' : '<span class="cat-arrow">' + svg("arrow") + '</span>') +
+      '</button>';
+    }).join("");
+
+    document.getElementById("screen-root").innerHTML =
+      '<div class="topline"><div class="mark">INDIS 2026</div><div class="mark-sub">Volunteer scan</div></div>' +
+      '<div class="day-switch">' + tabs + '</div>' +
+      '<h1 class="day-heading">Day ' + String(state.day).padStart(2, "0") + '</h1>' +
+      '<p class="day-sub">Select what you\'re scanning for</p>' +
+      '<div class="cat-list">' + cards + '</div>';
+
+    Array.prototype.forEach.call(document.querySelectorAll(".day-tab"), function (b) {
+      b.addEventListener("click", function () { state.day = Number(b.dataset.day); renderHome(); });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".cat-card"), function (b) {
+      b.addEventListener("click", function () {
+        state.category = b.dataset.cat;
+        state.tab = "qr";
+        state.idValue = "";
+        state.checked = false;
+        state.screen = "scan";
+        renderScan();
+      });
+    });
+  }
+
+  function renderScan() {
+    renderCaption(state.tab === "qr" ? "scan-qr" : "scan-id");
+    var title = "Day " + String(state.day).padStart(2, "0") + ", " + CATEGORY_LABEL[state.category];
+    var body;
+    if (state.tab === "qr") {
+      body =
+        '<div class="qr-pane">' +
+          '<div class="viewfinder">' +
+            '<span class="corner corner-tl"></span><span class="corner corner-tr"></span>' +
+            '<span class="corner corner-bl"></span><span class="corner corner-br"></span>' +
+            (state.scanning ? '<span class="scan-line"></span>' : "") +
+          '</div>' +
+          '<p class="qr-help">Align the QR on the delegate\'s badge within the frame</p>' +
+          '<button id="demo-scan" class="demo-btn" ' + (state.scanning ? "disabled" : "") + '>' + (state.scanning ? "Scanning…" : "Simulate scan (demo)") + '</button>' +
+        '</div>';
+    } else {
+      body =
+        '<div class="id-pane">' +
+          '<label class="id-label" for="delegate-id">Delegate ID</label>' +
+          '<div class="id-row">' +
+            '<div class="id-input-wrap">' +
+              '<input id="delegate-id" class="id-input" placeholder="e.g. IND-2026-0842" value="' + state.idValue + '">' +
+              (state.checked ? '<span class="id-check-icon">' + svg("check-sm") + '</span>' : "") +
+            '</div>' +
+            '<button id="check-btn" class="check-btn" ' + (!state.idValue.trim() || state.checked ? "disabled" : "") + '>Check</button>' +
+          '</div>' +
+          (state.checked ? delegateBlock() + '<button id="confirm-id-btn" class="primary-btn confirm-entry-btn">Confirm ' + CATEGORY_LABEL[state.category] + ' Entry</button>' : "") +
+        '</div>';
+    }
+
+    document.getElementById("screen-root").innerHTML =
+      '<div class="scan-header"><button id="back-btn" class="icon-btn" aria-label="Back">' + svg("back") + '</button><h1 class="scan-title">' + title + '</h1></div>' +
+      '<div class="tabs">' +
+        '<button class="tab ' + (state.tab === "qr" ? "tab-active" : "") + '" data-tab="qr">QR</button>' +
+        '<button class="tab ' + (state.tab === "id" ? "tab-active" : "") + '" data-tab="id">ID</button>' +
+      '</div>' + body;
+
+    document.getElementById("back-btn").addEventListener("click", function () { state.screen = "home"; state.category = null; renderHome(); });
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (b) {
+      b.addEventListener("click", function () { state.tab = b.dataset.tab; renderScan(); });
+    });
+
+    var demoBtn = document.getElementById("demo-scan");
+    if (demoBtn) demoBtn.addEventListener("click", function () {
+      if (state.scanning) return;
+      state.scanning = true;
+      renderScan();
+      setTimeout(function () { state.scanning = false; completeScan(); }, 900);
+    });
+
+    var input = document.getElementById("delegate-id");
+    if (input) input.addEventListener("input", function (e) {
+      state.idValue = e.target.value;
+      if (state.checked) state.checked = false;
+      renderScan();
+      document.getElementById("delegate-id").focus();
+      document.getElementById("delegate-id").setSelectionRange(state.idValue.length, state.idValue.length);
+    });
+
+    var checkBtn = document.getElementById("check-btn");
+    if (checkBtn) checkBtn.addEventListener("click", function () {
+      checkBtn.disabled = true; checkBtn.textContent = "Checking…";
+      setTimeout(function () { state.checked = true; renderScan(); }, 550);
+    });
+
+    var confirmIdBtn = document.getElementById("confirm-id-btn");
+    if (confirmIdBtn) confirmIdBtn.addEventListener("click", completeScan);
+  }
+
+  function completeScan() {
+    var key = keyFor(state.day, state.category);
+    if (key) state.scans[key] = true;
+    state.screen = "confirmed";
+    renderConfirmed();
+  }
+
+  function renderConfirmed() {
+    renderCaption("confirmed");
+    var rows = ["kit", "lunch", "highTea", "gala"];
+    var rowsHtml = rows.map(function (c) {
+      var cells = [1, 2, 3].map(function (d) {
+        var key = keyFor(d, c);
+        var status = key === null ? "na" : (state.scans[key] ? "confirmed" : "pending");
+        var isCurrent = d === state.day && c === state.category;
+        return '<div class="table-cell ' + (d === state.day ? "col-active" : "") + ' ' + (isCurrent ? "cell-current" : "") + '">' +
+          '<span class="cell-label">' + CATEGORY_LABEL[c] + '</span>' +
+          '<span class="cell-value cell-' + status + '">' + (status === "na" ? "N/A" : status === "confirmed" ? "Confirmed" : "Pending") + '</span>' +
+        '</div>';
+      }).join("");
+      return '<div class="table-row">' + cells + '</div>';
+    }).join("");
+
+    var head = [1, 2, 3].map(function (d) {
+      return '<div class="table-cell head-cell ' + (d === state.day ? "col-active" : "") + '">Day ' + d + '</div>';
+    }).join("");
+
+    document.getElementById("screen-root").innerHTML =
+      '<div class="scan-header"><button id="back-cat-btn" class="icon-btn" aria-label="Back to categories">' + svg("back") + '</button></div>' +
+      '<div class="confirm-block"><div class="check-circle">' + svg("check") + '</div><p class="confirm-title">Entry confirmed</p></div>' +
+      delegateBlock() +
+      '<div class="table"><div class="table-row table-head">' + head + '</div>' + rowsHtml + '</div>' +
+      '<button id="scan-next-btn" class="primary-btn back-scan-btn">Scan next</button>';
+
+    document.getElementById("back-cat-btn").addEventListener("click", function () { state.screen = "home"; state.category = null; renderHome(); });
+    document.getElementById("scan-next-btn").addEventListener("click", function () {
+      state.tab = "qr"; state.idValue = ""; state.checked = false; state.screen = "scan"; renderScan();
+    });
+  }
+
+  renderHome();
+})();
+</script>

@@ -8,40 +8,139 @@ import {
   ITINERARY_ITEMS,
   ItineraryKey,
   getCategorySettings,
+  getLiveDay,
   setCategoryEnabled,
+  setLiveDay,
   supabase,
 } from "@/lib/supabaseClient";
+import TopNav from "@/components/TopNav";
 
-// Admin dashboard: toggle which categories are open for scanning, search
-// attendees and see their full status, and export as CSV or a real Excel
-// (.xlsx) file — per day or all days — with a headcount summary at the
-// top of each export, meant to be handed straight to the caterer.
+// ---------------------------------------------------------------------------
+// This screen mirrors prototype_ui/indis-scan-flow.jsx's AdminScreen exactly
+// (same phone-mockup frame, same day-chevron nav + master toggle + category
+// table, same attendee table with All/Day tabs), wired to the real Supabase
+// attendees/category_settings/app_settings tables instead of mock state.
 //
-// NOTE: this page is now behind the /login password gate (middleware.ts +
-// app/api/auth/route.ts) rather than being wide open.
+// Two things the prototype's demo doesn't need but the real event does are
+// folded into the same visual language rather than left as raw Tailwind:
+// a search box + "on-spot only" filter above the attendee table, and a
+// real CSV/XLSX export (with the headcount summary + BOM fix from earlier)
+// wired to the export-btn, plus the separate "live day" control (which day
+// the *volunteer* scan flow treats as "today" — see lib/supabaseClient.ts).
+// ---------------------------------------------------------------------------
 
-// Which itinerary columns belong to which day, for the per-day CSV export
-// (e.g. handing Day 1's lunch/high-tea numbers to the caterer without the
-// other days' columns cluttering it up).
-const DAY_ITEMS: Record<1 | 2 | 3, ItineraryKey[]> = {
+type Category = "kit" | "lunch" | "highTea" | "gala";
+type Day = 1 | 2 | 3;
+
+const CATEGORY_LABEL: Record<Category, string> = {
+  kit: "Conference Kit",
+  lunch: "Lunch",
+  highTea: "High Tea",
+  gala: "Gala Dinner",
+};
+
+const SHORT_LABEL: Record<Category, string> = {
+  kit: "Kit",
+  lunch: "Lunch",
+  highTea: "Tea",
+  gala: "Gala",
+};
+
+const DAY_CATEGORIES: Record<Day, Category[]> = {
+  1: ["kit", "lunch", "highTea"],
+  2: ["lunch", "highTea"],
+  3: ["lunch", "highTea", "gala"],
+};
+
+const ALL_CATEGORIES: Category[] = ["kit", "lunch", "highTea", "gala"];
+
+function keyFor(day: Day, category: Category): ItineraryKey | null {
+  if (category === "kit") return day === 1 ? "kit_received" : null;
+  if (category === "lunch") {
+    if (day === 1) return "lunch_day1";
+    if (day === 2) return "lunch_day2";
+    return "lunch_day3";
+  }
+  if (category === "highTea") {
+    if (day === 1) return "high_tea_day1";
+    if (day === 2) return "high_tea_day2";
+    return "high_tea_day3";
+  }
+  if (category === "gala") return day === 3 ? "gala_dinner" : null;
+  return null;
+}
+
+// ---------- icons (ported as-is from the prototype) ----------
+
+function ChevronLeft(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M15 6L9 12L15 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronRight(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ExportIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M12 3v11M12 3L8 7M12 3l4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M4 12.5L9.5 18L20 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`toggle ${checked ? "toggle-on" : ""}`}
+      onClick={onChange}
+      aria-pressed={checked}
+      aria-label={label}
+      disabled={disabled}
+    >
+      <span className="toggle-knob" />
+    </button>
+  );
+}
+
+function StatusDot({ done }: { done: boolean }) {
+  if (done) return <CheckIcon className="attendee-status-yes" />;
+  return <span className="attendee-status-no">—</span>;
+}
+
+// ---------- export helpers (unchanged real functionality) ----------
+
+const DAY_ITEMS: Record<Day, ItineraryKey[]> = {
   1: ["kit_received", "lunch_day1", "high_tea_day1"],
   2: ["lunch_day2", "high_tea_day2"],
   3: ["lunch_day3", "high_tea_day3", "gala_dinner"],
 };
 
 function csvEscape(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
+  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
 }
 
 function downloadCsv(filename: string, rows: string[][]) {
   const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-  // The "—" in labels like "Lunch — Day 1" is a non-ASCII character —
-  // without a UTF-8 BOM at the start of the file, Excel/Sheets often
-  // guesses the wrong encoding and turns it into garbage ("â€"" etc).
-  // Prepending the BOM makes them detect UTF-8 correctly.
+  // UTF-8 BOM so Excel/Sheets don't mangle the "—" in labels like "Lunch — Day 1".
   const csvWithBom = "﻿" + csv;
   const blob = new Blob([csvWithBom], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -62,18 +161,23 @@ export default function AdminPage() {
   const [search, setSearch] = useState("");
   const [onspotOnly, setOnspotOnly] = useState(false);
   const [togglingKey, setTogglingKey] = useState<ItineraryKey | null>(null);
+  const [liveDay, setLiveDayState] = useState<Day>(1);
+  const [savingLiveDay, setSavingLiveDay] = useState(false);
+  const [attendeeTab, setAttendeeTab] = useState<"all" | Day>("all");
 
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      const [{ data, error: fetchError }, categorySettings] = await Promise.all([
+      const [{ data, error: fetchError }, categorySettings, day] = await Promise.all([
         supabase.from("attendees").select("*").order("name"),
         getCategorySettings(),
+        getLiveDay().catch(() => 1 as const),
       ]);
       if (fetchError) throw fetchError;
       setAttendees((data ?? []) as Attendee[]);
       setSettings(categorySettings);
+      setLiveDayState(day);
     } catch (e: any) {
       setError(
         e?.message?.includes("category_settings")
@@ -89,20 +193,52 @@ export default function AdminPage() {
     loadAll();
   }, []);
 
+  async function changeLiveDay(next: Day) {
+    if (next === liveDay || savingLiveDay) return;
+    setSavingLiveDay(true);
+    const prev = liveDay;
+    setLiveDayState(next);
+    if (attendeeTab !== "all") setAttendeeTab(next);
+    try {
+      await setLiveDay(next);
+    } catch {
+      setLiveDayState(prev);
+      setError("Couldn't update the live day — try again.");
+    } finally {
+      setSavingLiveDay(false);
+    }
+  }
+
   async function toggleCategory(key: ItineraryKey) {
     if (!settings) return;
     const next = !settings[key];
     setTogglingKey(key);
-    // optimistic update
-    setSettings({ ...settings, [key]: next });
+    setSettings({ ...settings, [key]: next }); // optimistic
     try {
       await setCategoryEnabled(key, next);
     } catch {
-      // revert on failure
       setSettings({ ...settings, [key]: !next });
       setError(`Couldn't update "${key}" — try again.`);
     } finally {
       setTogglingKey(null);
+    }
+  }
+
+  async function toggleMasterForDay(day: Day) {
+    if (!settings) return;
+    const cats = DAY_CATEGORIES[day];
+    const keys = cats.map((c) => keyFor(day, c)).filter(Boolean) as ItineraryKey[];
+    const allOn = keys.every((k) => settings[k]);
+    const next = !allOn;
+    const prevSettings = settings;
+    const optimistic = { ...settings };
+    keys.forEach((k) => (optimistic[k] = next));
+    setSettings(optimistic);
+    try {
+      await Promise.all(keys.map((k) => setCategoryEnabled(k, next)));
+    } catch {
+      setSettings(prevSettings);
+      setError("Couldn't update those categories — try again.");
     }
   }
 
@@ -121,282 +257,234 @@ export default function AdminPage() {
 
   const onspotCount = useMemo(() => attendees.filter((a) => a.is_onspot).length, [attendees]);
 
-  const counts = useMemo(() => {
-    const totals = {} as Record<ItineraryKey, number>;
-    for (const item of ITINERARY_ITEMS) {
-      totals[item.key] = attendees.filter((a) => Boolean(a[item.key])).length;
+  const scanCount = (day: Day, cat: Category) => {
+    const key = keyFor(day, cat);
+    if (!key) return 0;
+    return attendees.filter((a) => Boolean(a[key])).length;
+  };
+
+  const columns: Category[] = attendeeTab === "all" ? ALL_CATEGORIES : DAY_CATEGORIES[attendeeTab];
+
+  function cellValue(attendee: Attendee, col: Category) {
+    if (attendeeTab === "all") {
+      const daysWithCol = ([1, 2, 3] as Day[]).filter((d) => DAY_CATEGORIES[d].includes(col));
+      if (daysWithCol.length === 0) return null;
+      const confirmedCount = daysWithCol.filter((d) => {
+        const key = keyFor(d, col);
+        return key ? Boolean(attendee[key]) : false;
+      }).length;
+      return (
+        <span className="attendee-fraction">
+          {confirmedCount}/{daysWithCol.length}
+        </span>
+      );
     }
-    return totals;
-  }, [attendees]);
+    const key = keyFor(attendeeTab, col);
+    if (!key) return null;
+    return <StatusDot done={Boolean(attendee[key])} />;
+  }
 
   // Shared by both export formats. day: 1 | 2 | 3 restricts to just that
-  // day's columns (for the caterer); omit it for every column. Cell
-  // values are "Done"/"" — never the actual timestamp — since the
-  // caterer just needs a headcount, not timing. The summary block up top
-  // is the total participant count plus a scanned-count per included
-  // category, e.g. "Lunch — Day 1: 320 of 400 scanned".
-  function buildExportSheet(day?: 1 | 2 | 3) {
-    const items = day
-      ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key))
-      : ITINERARY_ITEMS;
-
-    const total = attendees.length;
+  // day's columns (for the caterer); "all" (attendeeTab) exports every
+  // column. Cell values are "Done"/"" — never the actual timestamp.
+  function buildExportSheet(day?: Day) {
+    const items = day ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key)) : ITINERARY_ITEMS;
+    const total = filtered.length;
     const summary: (string | number)[][] = [
       [`INDIS 2026 — ${day ? `Day ${day}` : "All days"} export`],
       [`Total participants: ${total}`],
-      ...items.map((i) => [`${i.label} scanned: ${counts[i.key] ?? 0} of ${total}`]),
+      ...items.map((i) => [`${i.label} scanned: ${filtered.filter((a) => Boolean(a[i.key])).length} of ${total}`]),
       [],
     ];
-
     const header = ["serial_code", "name", "organization", ...items.map((i) => i.label)];
-    const rows = attendees.map((a) => [
-      a.serial_code,
-      a.name,
-      a.organization ?? "",
-      ...items.map((i) => (a[i.key] ? "Done" : "")),
-    ]);
-
+    const rows = filtered.map((a) => [a.serial_code, a.name, a.organization ?? "", ...items.map((i) => (a[i.key] ? "Done" : ""))]);
     return { summary, header, rows, suffix: day ? `day${day}` : "all" };
   }
 
-  function exportCsv(day?: 1 | 2 | 3) {
+  function handleExportCsv() {
+    const day = attendeeTab === "all" ? undefined : attendeeTab;
     const { summary, header, rows, suffix } = buildExportSheet(day);
-    downloadCsv(
-      `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.csv`,
-      [...summary.map((r) => r.map(String)), header, ...rows]
-    );
+    downloadCsv(`indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ...summary.map((r) => r.map(String)),
+      header,
+      ...rows,
+    ]);
   }
 
-  function exportXlsx(day?: 1 | 2 | 3) {
+  function handleExportXlsx() {
+    const day = attendeeTab === "all" ? undefined : attendeeTab;
     const { summary, header, rows, suffix } = buildExportSheet(day);
     const sheetData = [...summary, header, ...rows];
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
-    // Bold the title + summary lines and widen columns a bit so the sheet
-    // is readable the moment it's opened, not just after manual formatting.
     ws["!cols"] = [{ wch: 14 }, { wch: 22 }, { wch: 22 }, ...header.slice(3).map(() => ({ wch: 16 }))];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendees");
     XLSX.writeFile(wb, `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  const dayCats = DAY_CATEGORIES[liveDay];
+  const dayKeys = dayCats.map((c) => keyFor(liveDay, c)).filter(Boolean) as ItineraryKey[];
+  const masterOn = settings ? dayKeys.every((k) => settings[k]) : true;
+
   return (
-    <main className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <style>{`
-        .switch { position: relative; width: 40px; height: 22px; border-radius: 999px; cursor: pointer; border: none; transition: background 0.15s; flex-shrink: 0; }
-        .switch-on { background: #2F5CFF; }
-        .switch-off { background: #D1D5DB; }
-        .switch-off:disabled, .switch-on:disabled { opacity: 0.6; cursor: default; }
-        .switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 999px; background: white; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
-        .switch-on .switch-knob { transform: translateX(18px); }
-      `}</style>
-
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-900">INDIS Admin Dashboard</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              {attendees.length} attendee{attendees.length === 1 ? "" : "s"} total
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 mr-1">Export as Excel:</span>
-              {([1, 2, 3] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => exportXlsx(d)}
-                  disabled={loading || attendees.length === 0}
-                  className="rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium px-3 py-2 disabled:opacity-40 hover:border-slate-400"
-                >
-                  Day {d}
-                </button>
-              ))}
-              <button
-                onClick={() => exportXlsx()}
-                disabled={loading || attendees.length === 0}
-                className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
-              >
-                All days
-              </button>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 mr-1">Export as CSV:</span>
-              {([1, 2, 3] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => exportCsv(d)}
-                  disabled={loading || attendees.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white text-slate-500 text-xs font-medium px-2.5 py-1.5 disabled:opacity-40 hover:border-slate-300"
-                >
-                  Day {d}
-                </button>
-              ))}
-              <button
-                onClick={() => exportCsv()}
-                disabled={loading || attendees.length === 0}
-                className="rounded-lg border border-slate-200 bg-white text-slate-500 text-xs font-medium px-2.5 py-1.5 disabled:opacity-40 hover:border-slate-300"
-              >
-                All days
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Headcount summary */}
-        <div className="mb-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-1">Total participants</p>
-            <p className="text-2xl font-semibold text-slate-900">{attendees.length}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-1">Scanned at least once</p>
-            <p className="text-2xl font-semibold text-slate-900">
-              {attendees.filter((a) => ITINERARY_ITEMS.some((i) => a[i.key])).length}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-1">Not scanned at all</p>
-            <p className="text-2xl font-semibold text-slate-900">
-              {attendees.filter((a) => !ITINERARY_ITEMS.some((i) => a[i.key])).length}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-1">Total scans logged</p>
-            <p className="text-2xl font-semibold text-slate-900">
-              {attendees.reduce((sum, a) => sum + ITINERARY_ITEMS.filter((i) => a[i.key]).length, 0)}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <p className="text-xs text-slate-500 mb-1">On-the-spot registrations</p>
-            <p className="text-2xl font-semibold text-slate-900">{onspotCount}</p>
-          </div>
-        </div>
-
-        {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-3">
-            {error}
-          </div>
-        )}
-
-        {/* Category on/off toggles */}
-        <section className="mb-8 bg-white rounded-xl border border-slate-200 p-5">
-          <h2 className="text-sm font-semibold text-slate-900 mb-1">Scannable categories</h2>
-          <p className="text-xs text-slate-500 mb-4">
-            Turn a category off to stop volunteers from scanning it (e.g. once Day 1 lunch service ends). Takes effect on the scanner immediately.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {ITINERARY_ITEMS.map((item) => {
-              const enabled = settings ? settings[item.key] : true;
-              return (
-                <div
-                  key={item.key}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-4 py-3"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{item.label}</p>
-                    <p className="text-xs text-slate-500">
-                      {counts[item.key] ?? 0} of {attendees.length} done
-                    </p>
+    <div className="wrap">
+      <div className="phone admin-phone">
+        <TopNav />
+        <div className="app-body">
+          <div className="screen admin-screen">
+            {loading ? (
+              <p className="qr-help">Loading…</p>
+            ) : (
+              <>
+                {error && (
+                  <div className="id-error-box" style={{ marginBottom: 16 }}>
+                    <p className="id-error-text">{error}</p>
                   </div>
-                  <button
-                    role="switch"
-                    aria-checked={enabled}
-                    disabled={!settings || togglingKey === item.key}
-                    onClick={() => toggleCategory(item.key)}
-                    className={`switch ${enabled ? "switch-on" : "switch-off"}`}
-                  >
-                    <span className="switch-knob" />
-                  </button>
+                )}
+
+                {/* Live day */}
+                <div className="admin-section-head">
+                  <h2 className="admin-h2">Live day</h2>
+                  <div className="admin-day-nav">
+                    <button
+                      className="icon-circle-btn"
+                      onClick={() => changeLiveDay((Math.max(1, liveDay - 1)) as Day)}
+                      disabled={liveDay === 1 || savingLiveDay}
+                      aria-label="Previous live day"
+                    >
+                      <ChevronLeft />
+                    </button>
+                    <span className="admin-live-day-label">Day {liveDay}</span>
+                    <button
+                      className="icon-circle-btn"
+                      onClick={() => changeLiveDay((Math.min(3, liveDay + 1)) as Day)}
+                      disabled={liveDay === 3 || savingLiveDay}
+                      aria-label="Next live day"
+                    >
+                      <ChevronRight />
+                    </button>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        </section>
+                <p className="qr-help admin-live-day-help">
+                  What the volunteer scanner treats as "today" — its categories are open (subject to the toggles
+                  below), earlier days show "Closed", later days are locked.
+                </p>
 
-        {/* Search + status table */}
-        <section className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <h2 className="text-sm font-semibold text-slate-900">Attendees</h2>
-            <div className="flex items-center gap-3 flex-wrap">
-              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={onspotOnly}
-                  onChange={(e) => setOnspotOnly(e.target.checked)}
-                  className="rounded border-slate-300"
-                />
-                On-the-spot only
-              </label>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, serial code, or organization…"
-                className="w-full sm:w-80 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
+                {/* Categories — always the live day's, so there's one
+                    day concept in this whole screen rather than a second
+                    "which day am I editing" control to keep in sync. */}
+                <div className="admin-section-head admin-section-head-spaced">
+                  <h2 className="admin-h2">Categories</h2>
+                </div>
 
-          {loading ? (
-            <p className="text-sm text-slate-500 py-6">Loading…</p>
-          ) : filtered.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6">
-              {search ? "No attendee matches that search." : "No attendees yet."}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm border-collapse">
-                <thead>
-                  <tr className="text-left border-b border-slate-200 text-slate-500">
-                    <th className="p-2 font-medium">Serial</th>
-                    <th className="p-2 font-medium">Name</th>
-                    <th className="p-2 font-medium">Organization</th>
-                    <th className="p-2 font-medium">Type</th>
-                    {ITINERARY_ITEMS.map((item) => (
-                      <th key={item.key} className="p-2 font-medium whitespace-nowrap">
-                        {item.label}
-                      </th>
+                <div className="admin-cat-table">
+                  <div className="admin-cat-day-row">
+                    <span>DAY {String(liveDay).padStart(2, "0")}</span>
+                    <Toggle checked={masterOn} onChange={() => toggleMasterForDay(liveDay)} label="Toggle all categories" />
+                  </div>
+                  {dayCats.map((c) => {
+                    const key = keyFor(liveDay, c);
+                    const enabled = key && settings ? settings[key] : true;
+                    return (
+                      <div className="admin-cat-row" key={c}>
+                        <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
+                        <span className="admin-cat-count">{scanCount(liveDay, c)} scanned</span>
+                        <Toggle
+                          checked={Boolean(enabled)}
+                          onChange={() => key && toggleCategory(key)}
+                          label={`Toggle ${CATEGORY_LABEL[c]}`}
+                          disabled={!key || togglingKey === key}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Attendees */}
+                <div className="admin-section-head admin-attendees-head">
+                  <h2 className="admin-h2">
+                    Attendees{" "}
+                    <span className="admin-attendee-total">
+                      ({filtered.length}
+                      {onspotOnly ? " on-the-spot" : ""})
+                    </span>
+                  </h2>
+                  <div className="admin-export-group">
+                    <button className="export-btn" onClick={handleExportXlsx} disabled={filtered.length === 0}>
+                      <ExportIcon />
+                      Excel
+                    </button>
+                    <button className="export-btn" onClick={handleExportCsv} disabled={filtered.length === 0}>
+                      <ExportIcon />
+                      CSV
+                    </button>
+                  </div>
+                </div>
+
+                <div className="admin-search-row">
+                  <input
+                    className="id-input admin-search-input"
+                    placeholder="Search name, ID, organization…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  <label className="admin-onspot-check">
+                    <input type="checkbox" checked={onspotOnly} onChange={(e) => setOnspotOnly(e.target.checked)} />
+                    On-the-spot only
+                    <span className="admin-onspot-count">({onspotCount})</span>
+                  </label>
+                </div>
+
+                <div className="tab-row-wrap">
+                  <div className="tabs admin-attendee-tabs">
+                    <button className={`tab ${attendeeTab === "all" ? "tab-active" : ""}`} onClick={() => setAttendeeTab("all")}>
+                      All
+                    </button>
+                    {([1, 2, 3] as Day[]).map((d) => (
+                      <button key={d} className={`tab ${attendeeTab === d ? "tab-active" : ""}`} onClick={() => setAttendeeTab(d)}>
+                        Day {String(d).padStart(2, "0")}
+                      </button>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((a) => (
-                    <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="p-2 font-mono text-xs text-slate-600">{a.serial_code}</td>
-                      <td className="p-2 font-medium text-slate-900">{a.name}</td>
-                      <td className="p-2 text-slate-600">{a.organization ?? "—"}</td>
-                      <td className="p-2">
-                        {a.is_onspot ? (
-                          <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-700 text-xs font-medium px-2 py-0.5 whitespace-nowrap">
-                            On-the-spot
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-xs">Pre-registered</span>
-                        )}
-                      </td>
-                      {ITINERARY_ITEMS.map((item) => {
-                        const done = Boolean(a[item.key]);
-                        return (
-                          <td key={item.key} className="p-2">
-                            <span
-                              className={
-                                done
-                                  ? "inline-flex items-center rounded-full bg-blue-50 text-blue-600 text-xs font-medium px-2 py-0.5"
-                                  : "text-slate-300 text-xs"
-                              }
-                            >
-                              {done ? "Done" : "—"}
+                  </div>
+                  <div className="tab-row-baseline" />
+                </div>
+
+                <div className="attendee-table-wrap">
+                  <div className="attendee-table">
+                    <div className="attendee-row attendee-head">
+                      <span className="cell-name">Name</span>
+                      <span className="cell-desig">Organization</span>
+                      {columns.map((c) => (
+                        <span className="cell-cat" key={c}>
+                          {SHORT_LABEL[c]}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="attendee-body">
+                      {filtered.map((a) => (
+                        <div className="attendee-row" key={a.id} title={a.serial_code}>
+                          <span className="cell-name">{a.name}</span>
+                          <span className="cell-desig">{a.organization || "—"}</span>
+                          {columns.map((c) => (
+                            <span className="cell-cat" key={c}>
+                              {cellValue(a, c)}
                             </span>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+                          ))}
+                        </div>
+                      ))}
+                      {filtered.length === 0 && (
+                        <div className="attendee-row">
+                          <span className="cell-desig">No attendees match.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }

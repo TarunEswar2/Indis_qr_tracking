@@ -58,36 +58,52 @@ function LoginForm() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#F1F1F3",
+        background: "var(--grey-100, #F6F6F7)",
         padding: 16,
-        fontFamily: "Helvetica, Arial, sans-serif",
+        fontFamily: "var(--font-body), Helvetica, Arial, sans-serif",
         boxSizing: "border-box",
       }}
     >
       <form
         onSubmit={handleSubmit}
         style={{
-          background: "#FFFFFF",
+          background: "var(--white, #FFFFFF)",
           padding: 32,
           borderRadius: 20,
           width: "100%",
           maxWidth: 360,
-          boxShadow: "0 20px 50px rgba(10,10,12,0.10)",
-          border: "1px solid #DBDBDF",
+          boxShadow: "0 16px 40px rgba(10,10,12,0.08)",
+          border: "1.5px solid var(--black, #2B2B30)",
           boxSizing: "border-box",
         }}
       >
-        <p style={{ fontSize: 13, fontWeight: 600, color: "#2F5CFF", margin: "0 0 4px" }}>
+        <p
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
+            color: "var(--accent, #2B4FBE)",
+            margin: "0 0 4px",
+          }}
+        >
           INDIS 2026
         </p>
-        <h1 style={{ fontSize: 21, fontWeight: 700, margin: "0 0 6px", color: "#0A0A0C" }}>
+        <h1
+          style={{
+            fontSize: 21,
+            fontWeight: 700,
+            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
+            margin: "0 0 6px",
+            color: "var(--black, #2B2B30)",
+          }}
+        >
           {role === "admin"
             ? "Admin access"
             : role === "onboarding"
             ? "Onboarding desk access"
             : "Volunteer access"}
         </h1>
-        <p style={{ fontSize: 13, color: "#8B8B93", margin: "0 0 22px" }}>
+        <p style={{ fontSize: 13, color: "var(--grey-500, #8B8B93)", margin: "0 0 22px" }}>
           Enter the {role} password to continue.
         </p>
 
@@ -100,9 +116,9 @@ function LoginForm() {
           placeholder="Password"
           style={{
             width: "100%",
-            padding: "13px 14px",
-            borderRadius: 10,
-            border: "1px solid #DBDBDF",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: "1.5px solid var(--black, #2B2B30)",
             marginBottom: 12,
             fontSize: 15,
             fontFamily: "inherit",
@@ -112,7 +128,19 @@ function LoginForm() {
         />
 
         {error && (
-          <p style={{ color: "#D64545", fontSize: 13, margin: "0 0 12px" }}>{error}</p>
+          <p
+            style={{
+              color: "var(--error, #C0392B)",
+              background: "var(--error-wash, rgba(192,57,43,0.12))",
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontSize: 13,
+              fontWeight: 600,
+              margin: "0 0 12px",
+            }}
+          >
+            {error}
+          </p>
         )}
 
         <button
@@ -120,11 +148,11 @@ function LoginForm() {
           disabled={loading || !password}
           style={{
             width: "100%",
-            padding: "13px 0",
-            borderRadius: 10,
-            border: "none",
-            background: loading || !password ? "#DBDBDF" : "#2F5CFF",
-            color: loading || !password ? "#8B8B93" : "#FFFFFF",
+            padding: "15px 0",
+            borderRadius: 12,
+            border: `1.5px solid ${loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)"}`,
+            background: loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)",
+            color: loading || !password ? "var(--grey-500, #8B8B93)" : "var(--white, #FFFFFF)",
             fontWeight: 600,
             fontSize: 15,
             fontFamily: "inherit",

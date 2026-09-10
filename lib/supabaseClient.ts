@@ -137,3 +137,31 @@ export async function setCategoryEnabled(key: ItineraryKey, enabled: boolean) {
   const { error } = await supabase.from("category_settings").upsert({ key, enabled });
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------
+// "Live day" — which day (1/2/3) the volunteer scan flow treats as
+// "today". Drives the home screen's open (today) / closed (past) /
+// locked (future) category states, matching the prototype's day-switch
+// UI. Set from the admin dashboard's day nav. Backed by a tiny
+// key/value `app_settings` table; defaults to 1 if the row is missing.
+// ---------------------------------------------------------------------
+
+export type Day = 1 | 2 | 3;
+
+export async function getLiveDay(): Promise<Day> {
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "live_day")
+    .maybeSingle();
+  if (error) throw error;
+  const parsed = Number(data?.value);
+  return (parsed === 1 || parsed === 2 || parsed === 3 ? parsed : 1) as Day;
+}
+
+export async function setLiveDay(day: Day) {
+  const { error } = await supabase
+    .from("app_settings")
+    .upsert({ key: "live_day", value: String(day) });
+  if (error) throw error;
+}
