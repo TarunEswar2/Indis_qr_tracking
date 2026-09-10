@@ -66,3 +66,26 @@ alter table category_settings enable row level security;
 
 create policy "allow all on category_settings" on category_settings
   for all using (true) with check (true);
+
+-- Password gate for /admin and /scan. One row per role. Plain text on
+-- purpose, so you can just edit it in the Supabase table editor whenever
+-- you want to change a password — no code change or redeploy needed.
+--
+-- IMPORTANT: unlike the other tables above, this one is NOT given an
+-- "allow all" policy. RLS is enabled with NO policies at all, which means
+-- the anon key (used by the browser) cannot read or write this table —
+-- only server-side code using the service role key can. Never add a
+-- policy here; that would let anyone with the site open read every
+-- password straight out of the database.
+create table if not exists app_passwords (
+  role text primary key,      -- 'admin' or 'volunteer'
+  password text not null
+);
+
+insert into app_passwords (role, password) values
+  ('admin', 'changeme-admin'),
+  ('volunteer', 'changeme-volunteer')
+on conflict (role) do nothing;
+
+alter table app_passwords enable row level security;
+-- (no policies — see note above)
