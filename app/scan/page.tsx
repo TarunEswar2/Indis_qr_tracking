@@ -62,6 +62,23 @@ const TODAY: Day = 1; // change to 2 or 3 as the event moves along
 
 const SCANNER_ELEMENT_ID = "reader";
 
+// html5-qrcode's camera start/stop is async, and React's effect-cleanup
+// function can't be awaited — so when ScanScreen unmounts (back button,
+// re-picking a category) and a new instance mounts right after, the old
+// instance's stop() and the new instance's start() can race, leaving the
+// camera stream in a broken/black state. This module-level lock forces
+// every start/stop across every instance to run one at a time, in order.
+let cameraLock: Promise<void> = Promise.resolve();
+
+function runExclusive<T>(task: () => Promise<T>): Promise<T> {
+  const result = cameraLock.then(task, task);
+  cameraLock = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
 // ---------- icons (ported as-is from the prototype) ----------
 
 function BackArrow(props: React.SVGProps<SVGSVGElement>) {
@@ -141,8 +158,9 @@ function HomeScreen({
   categorySettings: CategorySettings | null;
 }) {
   const cats = DAY_CATEGORIES[day];
-  const isToday = day === today;
-  const isPast = day < today;
+  // Days are no longer locked to "today" — volunteers can scan any day's
+  // categories at any time (e.g. catching up a late arrival on Day 1
+  // while the event is on Day 2). Only an admin-disabled category locks.
 
   return (
     <div className="screen home">
@@ -173,7 +191,7 @@ function HomeScreen({
           // itemKey (doesn't apply to this day) is never selectable
           // anyway via DAY_CATEGORIES, so this only affects real ones.
           const closedByAdmin = Boolean(itemKey && categorySettings && !categorySettings[itemKey]);
-          const selectable = isToday && !closedByAdmin;
+          const selectable = !closedByAdmin;
           return (
             <button
               key={c}
@@ -182,13 +200,7 @@ function HomeScreen({
               disabled={!selectable}
             >
               <span className="cat-name">{CATEGORY_LABEL[c]}</span>
-              {closedByAdmin ? (
-                <OffTag />
-              ) : isToday ? (
-                <ArrowRight className="cat-arrow" />
-              ) : isPast ? (
-                <LockedTag />
-              ) : null}
+              {closedByAdmin ? <OffTag /> : <ArrowRight className="cat-arrow" />}
             </button>
           );
         })}
@@ -297,44 +309,47 @@ function ScanScreen({
   }
 
   async function startScanner() {
-    setCameraError(null);
-    try {
-      const { Html5Qrcode } = await import("html5-qrcode");
-      const el = document.getElementById(SCANNER_ELEMENT_ID);
-      if (!el) return;
+    await runExclusive(async () => {
+      setCameraError(null);
+      try {
+        const { Html5Qrcode } = await import("html5-qrcode");
+        const el = document.getElementById(SCANNER_ELEMENT_ID);
+        if (!el) return;
 
-      const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID);
-      scannerRef.current = scanner;
+        const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID);
+        scannerRef.current = scanner;
 
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decodedText: string) => {
-          handleDecoded(decodedText);
-        },
-        () => {
-          // per-frame "no QR found" — expected constantly, not an error
-        }
-      );
-      setScannerActive(true);
-    } catch {
-      setScannerActive(false);
-      setCameraError("Couldn't access the camera. Use manual entry below instead.");
-    }
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText: string) => {
+            handleDecoded(decodedText);
+          },
+          () => {
+            // per-frame "no QR found" — expected constantly, not an error
+          }
+        );
+        setScannerActive(true);
+      } catch {
+        setScannerActive(false);
+        setCameraError("Couldn't access the camera. Use manual entry below instead.");
+      }
+    });
   }
 
   async function stopScanner() {
     const scanner = scannerRef.current;
-    if (scanner) {
+    scannerRef.current = null;
+    setScannerActive(false);
+    if (!scanner) return;
+    await runExclusive(async () => {
       try {
         await scanner.stop();
       } catch {}
       try {
         await scanner.clear();
       } catch {}
-      scannerRef.current = null;
-    }
-    setScannerActive(false);
+    });
   }
 
   useEffect(() => {
