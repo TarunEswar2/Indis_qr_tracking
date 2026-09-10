@@ -3,10 +3,17 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+const ROLE_HOME: Record<string, string> = {
+  admin: "/admin",
+  volunteer: "/scan",
+  onboarding: "/onboarding",
+};
+
 function LoginForm() {
   const params = useSearchParams();
-  const role = params.get("role") === "admin" ? "admin" : "volunteer";
-  const next = params.get("next") || (role === "admin" ? "/admin" : "/scan");
+  const roleParam = params.get("role");
+  const role = roleParam && roleParam in ROLE_HOME ? roleParam : "volunteer";
+  const next = params.get("next") || ROLE_HOME[role];
 
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +81,11 @@ function LoginForm() {
           INDIS 2026
         </p>
         <h1 style={{ fontSize: 21, fontWeight: 700, margin: "0 0 6px", color: "#0A0A0C" }}>
-          {role === "admin" ? "Admin access" : "Volunteer access"}
+          {role === "admin"
+            ? "Admin access"
+            : role === "onboarding"
+            ? "Onboarding desk access"
+            : "Volunteer access"}
         </h1>
         <p style={{ fontSize: 13, color: "#8B8B93", margin: "0 0 22px" }}>
           Enter the {role} password to continue.

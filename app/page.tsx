@@ -7,12 +7,18 @@ export default function Home() {
       <p className="text-slate-600 max-w-sm">
         QR-based itinerary tracking for conference volunteers and organizers.
       </p>
-      <div className="flex gap-4">
+      <div className="flex gap-4 flex-wrap justify-center">
         <Link
           href="/scan"
           className="rounded-lg bg-slate-900 px-5 py-3 text-white font-medium"
         >
           Volunteer Scanner
+        </Link>
+        <Link
+          href="/onboarding"
+          className="rounded-lg border border-slate-300 px-5 py-3 font-medium"
+        >
+          Onboarding Desk
         </Link>
         <Link
           href="/admin"

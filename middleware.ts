@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Gates /admin behind the "admin" password and /scan behind the
-// "volunteer" password (see supabase/schema.sql's app_passwords table and
-// app/api/auth/route.ts). Anything else on the site is untouched.
+// Gates /admin behind the "admin" password, /scan behind the "volunteer"
+// password, and /onboarding behind the "onboarding" password (see
+// supabase/schema.sql's app_passwords table and app/api/auth/route.ts).
+// Anything else on the site is untouched.
 const COOKIE_NAMES = {
   admin: "indis_admin_ok",
   volunteer: "indis_volunteer_ok",
+  onboarding: "indis_onboarding_ok",
 } as const;
 
 export function middleware(req: NextRequest) {
@@ -15,6 +17,8 @@ export function middleware(req: NextRequest) {
     ? "admin"
     : pathname.startsWith("/scan")
     ? "volunteer"
+    : pathname.startsWith("/onboarding")
+    ? "onboarding"
     : null;
 
   if (!role) return NextResponse.next();
@@ -30,5 +34,12 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin", "/admin/:path*", "/scan", "/scan/:path*"],
+  matcher: [
+    "/admin",
+    "/admin/:path*",
+    "/scan",
+    "/scan/:path*",
+    "/onboarding",
+    "/onboarding/:path*",
+  ],
 };
