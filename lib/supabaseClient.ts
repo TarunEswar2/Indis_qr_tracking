@@ -13,8 +13,10 @@ export const ITINERARY_ITEMS = [
   { key: "kit_received", label: "Conference Kit" },
   { key: "lunch_day1", label: "Lunch — Day 1" },
   { key: "lunch_day2", label: "Lunch — Day 2" },
+  { key: "lunch_day3", label: "Lunch — Day 3" },
   { key: "high_tea_day1", label: "High Tea — Day 1" },
   { key: "high_tea_day2", label: "High Tea — Day 2" },
+  { key: "high_tea_day3", label: "High Tea — Day 3" },
   { key: "gala_dinner", label: "Gala Dinner" },
 ] as const;
 
@@ -68,4 +70,31 @@ export async function markItineraryItem(
   });
 
   if (logError) throw logError;
+}
+
+// ---------------------------------------------------------------------
+// Category on/off switches (for the admin dashboard). Backed by the
+// `category_settings` table — one row per itinerary key. A key with no
+// row (e.g. before the migration in supabase/schema.sql is run) defaults
+// to enabled, so nothing breaks if this table is missing rows.
+// ---------------------------------------------------------------------
+
+export type CategorySettings = Record<ItineraryKey, boolean>;
+
+export async function getCategorySettings(): Promise<CategorySettings> {
+  const settings = {} as CategorySettings;
+  for (const item of ITINERARY_ITEMS) settings[item.key] = true;
+
+  const { data, error } = await supabase.from("category_settings").select("key, enabled");
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    if (row.key in settings) settings[row.key as ItineraryKey] = Boolean(row.enabled);
+  }
+  return settings;
+}
+
+export async function setCategoryEnabled(key: ItineraryKey, enabled: boolean) {
+  const { error } = await supabase.from("category_settings").upsert({ key, enabled });
+  if (error) throw error;
 }

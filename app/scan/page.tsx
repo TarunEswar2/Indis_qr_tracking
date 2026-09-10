@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Attendee,
+  CategorySettings,
   ItineraryKey,
   getAttendeeBySerial,
+  getCategorySettings,
   markItineraryItem,
 } from "@/lib/supabaseClient";
 
@@ -15,16 +17,16 @@ import {
 // a day + category (Kit / Lunch / High Tea / Gala), THEN scans or looks up
 // an attendee — the scan/lookup marks just that one category.
 //
-// Your schema doesn't have a per-day column for every category (kit and
-// gala are one-time, not per-day), so CATEGORY_TO_KEY below is the mapping
-// between the prototype's "day + abstract category" concept and your real
-// itinerary columns. Change this mapping (not the schema) if you want to
-// move Kit/Gala to a different day, or see the earlier chat message for
-// how to make categories fully data-driven instead of hardcoded here.
+// Real event structure (3 days):
+//   Day 1: Conference Kit, Lunch, High Tea
+//   Day 2: Lunch, High Tea
+//   Day 3: Lunch, High Tea, Gala Dinner
+// keyFor() below maps that day+category shape onto the real Supabase
+// columns (kit_received, lunch_day1..3, high_tea_day1..3, gala_dinner).
 // ---------------------------------------------------------------------------
 
 type Category = "kit" | "lunch" | "highTea" | "gala";
-type Day = 1 | 2;
+type Day = 1 | 2 | 3;
 
 const CATEGORY_LABEL: Record<Category, string> = {
   kit: "Conference Kit",
@@ -35,22 +37,47 @@ const CATEGORY_LABEL: Record<Category, string> = {
 
 const DAY_CATEGORIES: Record<Day, Category[]> = {
   1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea", "gala"],
+  2: ["lunch", "highTea"],
+  3: ["lunch", "highTea", "gala"],
 };
 
-// day + category -> real Supabase column, or null if that combo doesn't
-// apply (e.g. there's no lunch on... there's no "kit" on day 2).
+// day + category -> real Supabase column, or null if that combo doesn't apply.
 function keyFor(day: Day, category: Category): ItineraryKey | null {
   if (category === "kit") return day === 1 ? "kit_received" : null;
-  if (category === "lunch") return day === 1 ? "lunch_day1" : "lunch_day2";
-  if (category === "highTea") return day === 1 ? "high_tea_day1" : "high_tea_day2";
-  if (category === "gala") return day === 2 ? "gala_dinner" : null;
+  if (category === "lunch") {
+    if (day === 1) return "lunch_day1";
+    if (day === 2) return "lunch_day2";
+    return "lunch_day3";
+  }
+  if (category === "highTea") {
+    if (day === 1) return "high_tea_day1";
+    if (day === 2) return "high_tea_day2";
+    return "high_tea_day3";
+  }
+  if (category === "gala") return day === 3 ? "gala_dinner" : null;
   return null;
 }
 
-const TODAY: Day = 1; // change to 2 once day 1 has actually passed at the event
+const TODAY: Day = 1; // change to 2 or 3 as the event moves along
 
 const SCANNER_ELEMENT_ID = "reader";
+
+// html5-qrcode's camera start/stop is async, and React's effect-cleanup
+// function can't be awaited — so when ScanScreen unmounts (back button,
+// re-picking a category) and a new instance mounts right after, the old
+// instance's stop() and the new instance's start() can race, leaving the
+// camera stream in a broken/black state. This module-level lock forces
+// every start/stop across every instance to run one at a time, in order.
+let cameraLock: Promise<void> = Promise.resolve();
+
+function runExclusive<T>(task: () => Promise<T>): Promise<T> {
+  const result = cameraLock.then(task, task);
+  cameraLock = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 
 // ---------- icons (ported as-is from the prototype) ----------
 
@@ -100,6 +127,10 @@ function LockedTag() {
   return <span className="pill pill-confirmed">Done</span>;
 }
 
+function OffTag() {
+  return <span className="pill pill-off">Closed</span>;
+}
+
 function DelegatePreview({ attendee }: { attendee: Attendee }) {
   return (
     <div className="delegate-block">
@@ -118,15 +149,18 @@ function HomeScreen({
   setDay,
   today,
   onPick,
+  categorySettings,
 }: {
   day: Day;
   setDay: (d: Day) => void;
   today: Day;
   onPick: (c: Category) => void;
+  categorySettings: CategorySettings | null;
 }) {
   const cats = DAY_CATEGORIES[day];
-  const isToday = day === today;
-  const isPast = day < today;
+  // Days are no longer locked to "today" — volunteers can scan any day's
+  // categories at any time (e.g. catching up a late arrival on Day 1
+  // while the event is on Day 2). Only an admin-disabled category locks.
 
   return (
     <div className="screen home">
@@ -136,7 +170,7 @@ function HomeScreen({
       </div>
 
       <div className="day-switch">
-        {([1, 2] as Day[]).map((d) => (
+        {([1, 2, 3] as Day[]).map((d) => (
           <button
             key={d}
             className={`day-tab ${d === day ? "day-tab-active" : ""}`}
@@ -151,17 +185,25 @@ function HomeScreen({
       <p className="day-sub">Select what you're scanning for</p>
 
       <div className="cat-list">
-        {cats.map((c) => (
-          <button
-            key={c}
-            className={`cat-card ${!isToday ? "cat-card-locked" : ""}`}
-            onClick={() => isToday && onPick(c)}
-            disabled={!isToday}
-          >
-            <span className="cat-name">{CATEGORY_LABEL[c]}</span>
-            {isToday ? <ArrowRight className="cat-arrow" /> : isPast ? <LockedTag /> : null}
-          </button>
-        ))}
+        {cats.map((c) => {
+          const itemKey = keyFor(day, c);
+          // Admin turned this off in the dashboard. A category with no
+          // itemKey (doesn't apply to this day) is never selectable
+          // anyway via DAY_CATEGORIES, so this only affects real ones.
+          const closedByAdmin = Boolean(itemKey && categorySettings && !categorySettings[itemKey]);
+          const selectable = !closedByAdmin;
+          return (
+            <button
+              key={c}
+              className={`cat-card ${!selectable ? "cat-card-locked" : ""}`}
+              onClick={() => selectable && onPick(c)}
+              disabled={!selectable}
+            >
+              <span className="cat-name">{CATEGORY_LABEL[c]}</span>
+              {closedByAdmin ? <OffTag /> : <ArrowRight className="cat-arrow" />}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -267,49 +309,95 @@ function ScanScreen({
   }
 
   async function startScanner() {
-    setCameraError(null);
-    try {
-      const { Html5Qrcode } = await import("html5-qrcode");
-      const el = document.getElementById(SCANNER_ELEMENT_ID);
-      if (!el) return;
+    await runExclusive(async () => {
+      setCameraError(null);
+      try {
+        const { Html5Qrcode } = await import("html5-qrcode");
+        const el = document.getElementById(SCANNER_ELEMENT_ID);
+        if (!el) return;
 
-      const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID);
-      scannerRef.current = scanner;
+        // html5-qrcode's own clear() doesn't always fully remove the old
+        // <video>/<canvas> it created before a new instance mounts a new
+        // one — on some phones that leaves a stale, black video element
+        // stacked on top of (or instead of) the live one. Force the
+        // container empty ourselves before creating a fresh scanner, so
+        // there's never more than one video element in there.
+        el.innerHTML = "";
 
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decodedText: string) => {
-          handleDecoded(decodedText);
-        },
-        () => {
-          // per-frame "no QR found" — expected constantly, not an error
+        const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID);
+        scannerRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText: string) => {
+            handleDecoded(decodedText);
+          },
+          () => {
+            // per-frame "no QR found" — expected constantly, not an error
+          }
+        );
+
+        // Some mobile browsers report start() as resolved before the
+        // video element actually has a frame (readyState < 2), which is
+        // what a "camera looks black but the code thinks it's running"
+        // report usually is. Give it a beat and nudge play() if needed.
+        const video = el.querySelector("video") as HTMLVideoElement | null;
+        if (video) {
+          if (video.paused) {
+            video.play().catch(() => {});
+          }
+          if (video.readyState < 2) {
+            await new Promise((r) => setTimeout(r, 300));
+            if (video.paused) video.play().catch(() => {});
+          }
         }
-      );
-      setScannerActive(true);
-    } catch {
-      setScannerActive(false);
-      setCameraError("Couldn't access the camera. Use manual entry below instead.");
-    }
+
+        setScannerActive(true);
+      } catch {
+        setScannerActive(false);
+        setCameraError("Couldn't access the camera. Use manual entry below instead.");
+      }
+    });
   }
 
   async function stopScanner() {
     const scanner = scannerRef.current;
-    if (scanner) {
+    scannerRef.current = null;
+    setScannerActive(false);
+    if (!scanner) return;
+    await runExclusive(async () => {
       try {
         await scanner.stop();
       } catch {}
       try {
         await scanner.clear();
       } catch {}
-      scannerRef.current = null;
-    }
-    setScannerActive(false);
+      // Belt-and-suspenders: make sure nothing (a stale <video>, an
+      // orphaned overlay) is left behind in the container for the next
+      // startScanner() to inherit.
+      const el = document.getElementById(SCANNER_ELEMENT_ID);
+      if (el) el.innerHTML = "";
+    });
   }
 
   useEffect(() => {
     startScanner();
+
+    // Mobile Chrome/Safari can freeze the camera's <video> element to a
+    // black frame when the tab is backgrounded (app-switch, phone lock)
+    // and doesn't always resume it cleanly on its own when you come back.
+    // Restarting the scanner on visibility-regain fixes that black-screen
+    // case without waiting for the volunteer to notice and hit back/retry.
+    function handleVisibility() {
+      if (document.visibilityState === "visible" && scannerRef.current) {
+        stopScanner().then(() => startScanner());
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
       stopScanner();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -413,7 +501,7 @@ function ConfirmedScreen({
   onBackToScanner: () => void;
 }) {
   const rows: Category[] = ["kit", "lunch", "highTea", "gala"];
-  const days: Day[] = [1, 2];
+  const days: Day[] = [1, 2, 3];
 
   return (
     <div className="screen">
@@ -481,8 +569,25 @@ export default function ScanPage() {
   const [idValue, setIdValue] = useState("");
   const [attendee, setAttendee] = useState<Attendee | null>(null);
   const [visit, setVisit] = useState(0);
+  const [categorySettings, setCategorySettings] = useState<CategorySettings | null>(null);
+
+  useEffect(() => {
+    getCategorySettings()
+      .then(setCategorySettings)
+      .catch(() => {
+        // category_settings table missing/unreachable — fall back to
+        // "everything open" rather than blocking the whole scanner.
+        setCategorySettings(null);
+      });
+  }, []);
 
   function pickCategory(c: Category) {
+    const itemKey = keyFor(day, c);
+    if (itemKey && categorySettings && !categorySettings[itemKey]) {
+      // Shouldn't normally happen (the card is disabled), but guards
+      // against a stale render if the admin flips a toggle mid-visit.
+      return;
+    }
     setCategory(c);
     setTab("qr");
     setIdValue("");
@@ -617,6 +722,7 @@ export default function ScanPage() {
         .cat-arrow { color: var(--grey-500); }
         .pill { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 100px; }
         .pill-confirmed { background: var(--blue-dim); color: var(--blue); }
+        .pill-off { background: var(--grey-300); color: var(--grey-700); }
 
         /* SCAN SCREEN */
         .scan-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
@@ -690,7 +796,7 @@ export default function ScanPage() {
         .delegate-role { font-size: 14px; color: var(--grey-700); margin: 0; line-height: 1.5; }
 
         .table { border: 1px solid var(--grey-300); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }
-        .table-row { display: grid; grid-template-columns: repeat(2, 1fr); }
+        .table-row { display: grid; grid-template-columns: repeat(3, 1fr); }
         .table-row + .table-row { border-top: 1px solid var(--grey-300); }
         .table-cell { padding: 12px 10px; border-right: 1px solid var(--grey-300); display: flex; flex-direction: column; gap: 3px; }
         .table-cell:last-child { border-right: none; }
@@ -708,7 +814,15 @@ export default function ScanPage() {
       `}</style>
 
       <div className="phone">
-        {screen === "home" && <HomeScreen day={day} setDay={setDay} today={TODAY} onPick={pickCategory} />}
+        {screen === "home" && (
+          <HomeScreen
+            day={day}
+            setDay={setDay}
+            today={TODAY}
+            onPick={pickCategory}
+            categorySettings={categorySettings}
+          />
+        )}
         {screen === "scan" && category && (
           <ScanScreen
             key={`scan-${visit}`}
