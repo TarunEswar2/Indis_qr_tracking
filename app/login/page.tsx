@@ -1,10 +1,9 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const role = params.get("role") === "admin" ? "admin" : "volunteer";
   const next = params.get("next") || (role === "admin" ? "/admin" : "/scan");
@@ -29,8 +28,14 @@ function LoginForm() {
         setError(body?.error ?? "Incorrect password.");
         return;
       }
-      router.replace(next);
-      router.refresh();
+      // A full page load (not the Next.js client router) so the browser
+      // sends the just-set cookie on this exact next request and the
+      // middleware sees it immediately — a client-side router.replace()
+      // can navigate using an already-cached version of the target page
+      // from before the cookie existed, which is what forced a second
+      // "Continue" click to actually get through.
+      window.location.href = next;
+      return;
     } catch {
       setError("Something went wrong — try again.");
     } finally {
