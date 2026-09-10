@@ -71,12 +71,13 @@ create policy "allow all on category_settings" on category_settings
 -- purpose, so you can just edit it in the Supabase table editor whenever
 -- you want to change a password — no code change or redeploy needed.
 --
--- IMPORTANT: unlike the other tables above, this one is NOT given an
--- "allow all" policy. RLS is enabled with NO policies at all, which means
--- the anon key (used by the browser) cannot read or write this table —
--- only server-side code using the service role key can. Never add a
--- policy here; that would let anyone with the site open read every
--- password straight out of the database.
+-- Read-only for the anon key (no insert/update/delete policy), so the app
+-- can check a password but can't be used to change one from the browser —
+-- passwords are only ever edited by hand in the Supabase table editor.
+-- Note: this means the password values are technically readable by anyone
+-- who inspects the site's network requests directly (same anon key your
+-- app already uses everywhere else), not just through the login screen.
+-- Fine for a volunteer tool; don't reuse these passwords anywhere sensitive.
 create table if not exists app_passwords (
   role text primary key,      -- 'admin' or 'volunteer'
   password text not null
@@ -88,4 +89,6 @@ insert into app_passwords (role, password) values
 on conflict (role) do nothing;
 
 alter table app_passwords enable row level security;
--- (no policies — see note above)
+
+create policy "allow read on app_passwords" on app_passwords
+  for select using (true);
