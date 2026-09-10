@@ -23,6 +23,15 @@ import {
 // category toggles. Fine for a small trusted-organizer setup; worth
 // locking down before handing the URL out more broadly.
 
+// Which itinerary columns belong to which day, for the per-day CSV export
+// (e.g. handing Day 1's lunch/high-tea numbers to the caterer without the
+// other days' columns cluttering it up).
+const DAY_ITEMS: Record<1 | 2 | 3, ItineraryKey[]> = {
+  1: ["kit_received", "lunch_day1", "high_tea_day1"],
+  2: ["lunch_day2", "high_tea_day2"],
+  3: ["lunch_day3", "high_tea_day3", "gala_dinner"],
+};
+
 function csvEscape(value: string): string {
   if (/[",\n]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
@@ -113,21 +122,24 @@ export default function AdminPage() {
     return totals;
   }, [attendees]);
 
-  function exportCsv() {
-    const header = [
-      "serial_code",
-      "name",
-      "organization",
-      ...ITINERARY_ITEMS.map((i) => i.key),
-    ];
+  // day: 1 | 2 | 3 exports just that day's columns (for the caterer);
+  // omit it for every column. Values are "Done"/"" — never the actual
+  // timestamp — since the caterer just needs a headcount, not timing.
+  function exportCsv(day?: 1 | 2 | 3) {
+    const items = day
+      ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key))
+      : ITINERARY_ITEMS;
+
+    const header = ["serial_code", "name", "organization", ...items.map((i) => i.label)];
     const rows = attendees.map((a) => [
       a.serial_code,
       a.name,
       a.organization ?? "",
-      ...ITINERARY_ITEMS.map((i) => (a[i.key] ? a[i.key]! : "")),
+      ...items.map((i) => (a[i.key] ? "Done" : "")),
     ]);
+    const suffix = day ? `day${day}` : "all";
     downloadCsv(
-      `indis-attendees-${new Date().toISOString().slice(0, 10)}.csv`,
+      `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.csv`,
       [header, ...rows]
     );
   }
@@ -151,13 +163,26 @@ export default function AdminPage() {
               {attendees.length} attendee{attendees.length === 1 ? "" : "s"} total
             </p>
           </div>
-          <button
-            onClick={exportCsv}
-            disabled={loading || attendees.length === 0}
-            className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
-          >
-            Export all as CSV
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 mr-1">Export as CSV:</span>
+            {([1, 2, 3] as const).map((d) => (
+              <button
+                key={d}
+                onClick={() => exportCsv(d)}
+                disabled={loading || attendees.length === 0}
+                className="rounded-lg border border-slate-300 bg-white text-slate-700 text-sm font-medium px-3 py-2 disabled:opacity-40 hover:border-slate-400"
+              >
+                Day {d}
+              </button>
+            ))}
+            <button
+              onClick={() => exportCsv()}
+              disabled={loading || attendees.length === 0}
+              className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
+            >
+              All days
+            </button>
+          </div>
         </div>
 
         {error && (
