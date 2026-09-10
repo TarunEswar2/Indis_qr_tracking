@@ -492,7 +492,7 @@ function AdminPage() {
 
 export default function AdminPageGated() {
   return (
-    <AuthGate role="admin">
+    <AuthGate role="admin" label="Admin">
       <AdminPage />
     </AuthGate>
   );

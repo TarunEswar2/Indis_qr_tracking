@@ -1,35 +1,46 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import TopNav from "@/components/TopNav";
 
-// Per-tab password gate. Deliberately uses sessionStorage instead of the
-// old cookie: sessionStorage is scoped to a single browsing-context tab
-// (unlike a cookie, which is shared across every tab in the browser), so
-// opening a fresh tab — even to a role that's already unlocked in another
-// tab — asks for the password again. That's the point: each new tab is
-// its own "session" for auth purposes.
+// Password gate, styled exactly like prototype_ui/indis-scan-flow.jsx's
+// PasswordGate (same .gate/.gate-icon/.gate-sub/.gate-input/.gate-btn
+// classes, same lock icon, same copy) instead of a separate modal — it's
+// just another "screen" inside the same phone frame, topbar and all.
 //
-// The actual password check still goes through /api/auth (which checks
-// app_passwords in Supabase); this component just decides, per tab,
-// whether to show that check or the real page.
+// Two roles only: "staff" (shared by /scan and /onboarding — unlock
+// either one and both are unlocked) and "admin" (its own password). Each
+// unlock is written to sessionStorage, so it's asked once per browser
+// tab/session — matching the prototype's own "you'll only be asked once
+// per session" copy — but never on every screen switch within that tab.
 
-type Role = "admin" | "volunteer" | "onboarding";
+type Role = "staff" | "admin";
 
 const SESSION_KEYS: Record<Role, string> = {
+  staff: "indis_staff_ok",
   admin: "indis_admin_ok",
-  volunteer: "indis_volunteer_ok",
-  onboarding: "indis_onboarding_ok",
 };
 
-const ROLE_TITLE: Record<Role, string> = {
-  admin: "Admin access",
-  volunteer: "Volunteer access",
-  onboarding: "Onboarding desk access",
-};
+function LockIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
 
-export default function AuthGate({ role, children }: { role: Role; children: React.ReactNode }) {
+export default function AuthGate({
+  role,
+  label,
+  children,
+}: {
+  role: Role;
+  label: string;
+  children: React.ReactNode;
+}) {
   // null = still checking sessionStorage (avoids a flash of the real page
-  // before we know), true = unlocked for this tab, false = show the form.
+  // before we know), true = unlocked for this tab, false = show the gate.
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,9 +56,8 @@ export default function AuthGate({ role, children }: { role: Role; children: Rea
     setUnlocked(ok);
   }, [role]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!password || loading) return;
+  async function submit() {
+    if (!password.trim() || loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -77,113 +87,39 @@ export default function AuthGate({ role, children }: { role: Role; children: Rea
   if (unlocked) return <>{children}</>;
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--grey-100, #F6F6F7)",
-        padding: 16,
-        fontFamily: "var(--font-body), Helvetica, Arial, sans-serif",
-        boxSizing: "border-box",
-      }}
-    >
-      <form
-        onSubmit={handleSubmit}
-        style={{
-          background: "var(--white, #FFFFFF)",
-          padding: 32,
-          borderRadius: 20,
-          width: "100%",
-          maxWidth: 360,
-          boxShadow: "0 16px 40px rgba(10,10,12,0.08)",
-          border: "1.5px solid var(--black, #2B2B30)",
-          boxSizing: "border-box",
-        }}
-      >
-        <p
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
-            color: "var(--accent, #2B4FBE)",
-            margin: "0 0 4px",
-          }}
-        >
-          INDIS 2026
-        </p>
-        <h1
-          style={{
-            fontSize: 21,
-            fontWeight: 700,
-            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
-            margin: "0 0 6px",
-            color: "var(--black, #2B2B30)",
-          }}
-        >
-          {ROLE_TITLE[role]}
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--grey-500, #8B8B93)", margin: "0 0 22px" }}>
-          Enter the {role} password to continue. You&rsquo;ll be asked again in any new tab.
-        </p>
-
-        <input
-          type="password"
-          autoFocus
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 12,
-            border: "1.5px solid var(--black, #2B2B30)",
-            marginBottom: 12,
-            fontSize: 15,
-            fontFamily: "inherit",
-            boxSizing: "border-box",
-            outline: "none",
-          }}
-        />
-
-        {error && (
-          <p
-            style={{
-              color: "var(--error, #C0392B)",
-              background: "var(--error-wash, rgba(192,57,43,0.12))",
-              borderRadius: 10,
-              padding: "10px 12px",
-              fontSize: 13,
-              fontWeight: 600,
-              margin: "0 0 12px",
-            }}
-          >
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading || !password}
-          style={{
-            width: "100%",
-            padding: "15px 0",
-            borderRadius: 12,
-            border: `1.5px solid ${loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)"}`,
-            background: loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)",
-            color: loading || !password ? "var(--grey-500, #8B8B93)" : "var(--white, #FFFFFF)",
-            fontWeight: 600,
-            fontSize: 15,
-            fontFamily: "inherit",
-            cursor: loading || !password ? "default" : "pointer",
-          }}
-        >
-          {loading ? "Checking…" : "Continue"}
-        </button>
-      </form>
-    </main>
+    <div className="wrap">
+      <div className="phone">
+        <TopNav />
+        <div className="app-body">
+          <div className="screen gate">
+            <div className="gate-icon">
+              <LockIcon />
+            </div>
+            <h1 className="confirm-title">{label} access</h1>
+            <p className="qr-help gate-sub">
+              Enter the password to continue. You&rsquo;ll only be asked once per session.
+            </p>
+            <input
+              className="id-input gate-input"
+              type="password"
+              autoFocus
+              autoComplete="current-password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+            {error && (
+              <div className="id-error-box" style={{ width: "100%", marginBottom: 14 }}>
+                <p className="id-error-text">{error}</p>
+              </div>
+            )}
+            <button className="primary-btn gate-btn" disabled={!password.trim() || loading} onClick={submit}>
+              {loading ? "Checking…" : "Unlock"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

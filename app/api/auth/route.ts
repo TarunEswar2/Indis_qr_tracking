@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
 // Just verifies a role's password against Supabase. The "stay unlocked"
-// bit is no longer a cookie set here — it's sessionStorage, written by
-// the caller (components/AuthGate.tsx) on a 200 response, so that being
-// unlocked is scoped to one browser tab instead of the whole browser:
-// open a new tab and it asks again, per what was asked for.
+// bit is sessionStorage, written by the caller (components/AuthGate.tsx)
+// on a 200 response, so it's asked once per browser tab/session rather
+// than on every screen switch.
+//
+// Two roles: "staff" (shared by /scan and /onboarding — one password
+// unlocks both) and "admin" (its own password). See
+// supabase/schema.sql's app_passwords table.
 export async function POST(req: NextRequest) {
   let body: { role?: string; password?: string };
   try {
@@ -16,7 +19,7 @@ export async function POST(req: NextRequest) {
 
   const { role, password } = body;
 
-  if (role !== "admin" && role !== "volunteer" && role !== "onboarding") {
+  if (role !== "admin" && role !== "staff") {
     return NextResponse.json({ error: "Invalid role." }, { status: 400 });
   }
   if (typeof password !== "string" || !password) {

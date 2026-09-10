@@ -875,9 +875,8 @@
   margin-bottom: 14px;
 }
 
-/* Site-wide font — applies even outside .wrap (e.g. /login, which uses
-   inline styles rather than these classes) so the whole app, not just
-   the three phone-mockup screens, uses the prototype's typeface. */
+/* Site-wide font — so the whole app, not just the three phone-mockup
+   screens, uses the prototype's typeface. */
 html, body {
   font-family: var(--font-body), Helvetica, Arial, sans-serif;
 }

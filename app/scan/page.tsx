@@ -670,7 +670,7 @@ function ScanPage() {
 
 export default function ScanPageGated() {
   return (
-    <AuthGate role="volunteer">
+    <AuthGate role="staff" label="Volunteer">
       <ScanPage />
     </AuthGate>
   );

@@ -79,18 +79,31 @@ create policy "allow all on category_settings" on category_settings
 -- app already uses everywhere else), not just through the login screen.
 -- Fine for a volunteer tool; don't reuse these passwords anywhere sensitive.
 create table if not exists app_passwords (
-  role text primary key,      -- 'admin', 'volunteer', or 'onboarding'
+  role text primary key,      -- 'admin' or 'staff'
   password text not null
 );
 
 insert into app_passwords (role, password) values
   ('admin', 'changeme-admin'),
-  ('volunteer', 'changeme-volunteer'),
-  ('onboarding', 'changeme-onboarding')
+  ('staff', 'changeme-staff')
 on conflict (role) do nothing;
+
+-- One shared "staff" password now covers both /scan (volunteer) and
+-- /onboarding — they used to be separate roles/passwords, which meant
+-- unlocking one didn't unlock the other even though the same people use
+-- both. Collapses the old two rows into the single row above; safe to
+-- run even if this has already been applied (checks before dropping).
+do $$
+begin
+  if exists (select 1 from app_passwords where role = 'volunteer') then
+    update app_passwords set role = 'staff' where role = 'volunteer';
+  end if;
+  delete from app_passwords where role = 'onboarding';
+end $$;
 
 alter table app_passwords enable row level security;
 
+drop policy if exists "allow read on app_passwords" on app_passwords;
 create policy "allow read on app_passwords" on app_passwords
   for select using (true);
 

@@ -309,7 +309,7 @@ function OnboardingPage() {
 
 export default function OnboardingPageGated() {
   return (
-    <AuthGate role="onboarding">
+    <AuthGate role="staff" label="Onboarding desk">
       <OnboardingPage />
     </AuthGate>
   );
