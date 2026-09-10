@@ -826,8 +826,8 @@ export default function App() {
           transition: background 0.15s ease, color 0.15s ease;
         }
         .main-tab-shape-active {
-          background: var(--white);
-          color: var(--black);
+          background: var(--black);
+          color: var(--white);
           border: 1.5px solid var(--black);
         }
 
