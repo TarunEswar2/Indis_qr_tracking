@@ -316,6 +316,14 @@ function ScanScreen({
         const el = document.getElementById(SCANNER_ELEMENT_ID);
         if (!el) return;
 
+        // html5-qrcode's own clear() doesn't always fully remove the old
+        // <video>/<canvas> it created before a new instance mounts a new
+        // one — on some phones that leaves a stale, black video element
+        // stacked on top of (or instead of) the live one. Force the
+        // container empty ourselves before creating a fresh scanner, so
+        // there's never more than one video element in there.
+        el.innerHTML = "";
+
         const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID);
         scannerRef.current = scanner;
 
@@ -329,6 +337,22 @@ function ScanScreen({
             // per-frame "no QR found" — expected constantly, not an error
           }
         );
+
+        // Some mobile browsers report start() as resolved before the
+        // video element actually has a frame (readyState < 2), which is
+        // what a "camera looks black but the code thinks it's running"
+        // report usually is. Give it a beat and nudge play() if needed.
+        const video = el.querySelector("video") as HTMLVideoElement | null;
+        if (video) {
+          if (video.paused) {
+            video.play().catch(() => {});
+          }
+          if (video.readyState < 2) {
+            await new Promise((r) => setTimeout(r, 300));
+            if (video.paused) video.play().catch(() => {});
+          }
+        }
+
         setScannerActive(true);
       } catch {
         setScannerActive(false);
@@ -349,12 +373,31 @@ function ScanScreen({
       try {
         await scanner.clear();
       } catch {}
+      // Belt-and-suspenders: make sure nothing (a stale <video>, an
+      // orphaned overlay) is left behind in the container for the next
+      // startScanner() to inherit.
+      const el = document.getElementById(SCANNER_ELEMENT_ID);
+      if (el) el.innerHTML = "";
     });
   }
 
   useEffect(() => {
     startScanner();
+
+    // Mobile Chrome/Safari can freeze the camera's <video> element to a
+    // black frame when the tab is backgrounded (app-switch, phone lock)
+    // and doesn't always resume it cleanly on its own when you come back.
+    // Restarting the scanner on visibility-regain fixes that black-screen
+    // case without waiting for the volunteer to notice and hit back/retry.
+    function handleVisibility() {
+      if (document.visibilityState === "visible" && scannerRef.current) {
+        stopScanner().then(() => startScanner());
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
       stopScanner();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
