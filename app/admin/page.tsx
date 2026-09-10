@@ -14,6 +14,7 @@ import {
   supabase,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
+import AuthGate from "@/components/AuthGate";
 
 // ---------------------------------------------------------------------------
 // This screen mirrors prototype_ui/indis-scan-flow.jsx's AdminScreen exactly
@@ -153,7 +154,7 @@ function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
-export default function AdminPage() {
+function AdminPage() {
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [settings, setSettings] = useState<CategorySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -486,5 +487,13 @@ export default function AdminPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AdminPageGated() {
+  return (
+    <AuthGate role="admin">
+      <AdminPage />
+    </AuthGate>
   );
 }

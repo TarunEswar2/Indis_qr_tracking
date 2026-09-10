@@ -1,23 +1,49 @@
 "use client";
 
-import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
-const ROLE_HOME: Record<string, string> = {
-  admin: "/admin",
-  volunteer: "/scan",
-  onboarding: "/onboarding",
+// Per-tab password gate. Deliberately uses sessionStorage instead of the
+// old cookie: sessionStorage is scoped to a single browsing-context tab
+// (unlike a cookie, which is shared across every tab in the browser), so
+// opening a fresh tab — even to a role that's already unlocked in another
+// tab — asks for the password again. That's the point: each new tab is
+// its own "session" for auth purposes.
+//
+// The actual password check still goes through /api/auth (which checks
+// app_passwords in Supabase); this component just decides, per tab,
+// whether to show that check or the real page.
+
+type Role = "admin" | "volunteer" | "onboarding";
+
+const SESSION_KEYS: Record<Role, string> = {
+  admin: "indis_admin_ok",
+  volunteer: "indis_volunteer_ok",
+  onboarding: "indis_onboarding_ok",
 };
 
-function LoginForm() {
-  const params = useSearchParams();
-  const roleParam = params.get("role");
-  const role = roleParam && roleParam in ROLE_HOME ? roleParam : "volunteer";
-  const next = params.get("next") || ROLE_HOME[role];
+const ROLE_TITLE: Record<Role, string> = {
+  admin: "Admin access",
+  volunteer: "Volunteer access",
+  onboarding: "Onboarding desk access",
+};
 
+export default function AuthGate({ role, children }: { role: Role; children: React.ReactNode }) {
+  // null = still checking sessionStorage (avoids a flash of the real page
+  // before we know), true = unlocked for this tab, false = show the form.
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let ok = false;
+    try {
+      ok = sessionStorage.getItem(SESSION_KEYS[role]) === "1";
+    } catch {
+      ok = false;
+    }
+    setUnlocked(ok);
+  }, [role]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,27 +61,20 @@ function LoginForm() {
         setError(body?.error ?? "Incorrect password.");
         return;
       }
-      // Mirrors what components/AuthGate.tsx sets for the same role, so
-      // landing here directly (rather than hitting the gate inline on
-      // /admin, /scan or /onboarding) doesn't prompt a second time in
-      // this same tab.
       try {
-        sessionStorage.setItem(`indis_${role}_ok`, "1");
+        sessionStorage.setItem(SESSION_KEYS[role], "1");
       } catch {}
-      // A full page load (not the Next.js client router) so the browser
-      // sends the just-set cookie on this exact next request and the
-      // middleware sees it immediately — a client-side router.replace()
-      // can navigate using an already-cached version of the target page
-      // from before the cookie existed, which is what forced a second
-      // "Continue" click to actually get through.
-      window.location.href = next;
-      return;
+      setPassword("");
+      setUnlocked(true);
     } catch {
       setError("Something went wrong — try again.");
     } finally {
       setLoading(false);
     }
   }
+
+  if (unlocked === null) return null;
+  if (unlocked) return <>{children}</>;
 
   return (
     <main
@@ -104,14 +123,10 @@ function LoginForm() {
             color: "var(--black, #2B2B30)",
           }}
         >
-          {role === "admin"
-            ? "Admin access"
-            : role === "onboarding"
-            ? "Onboarding desk access"
-            : "Volunteer access"}
+          {ROLE_TITLE[role]}
         </h1>
         <p style={{ fontSize: 13, color: "var(--grey-500, #8B8B93)", margin: "0 0 22px" }}>
-          Enter the {role} password to continue.
+          Enter the {role} password to continue. You&rsquo;ll be asked again in any new tab.
         </p>
 
         <input
@@ -170,13 +185,5 @@ function LoginForm() {
         </button>
       </form>
     </main>
-  );
-}
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
   );
 }

@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
-// Session cookie names — deliberately have no maxAge/expires set below,
-// which makes them true browser-session cookies: they clear themselves
-// when the browser is fully closed (not just the tab), and stay valid for
-// as long as it's open, per what was decided for this project.
-const COOKIE_NAMES = {
-  admin: "indis_admin_ok",
-  volunteer: "indis_volunteer_ok",
-  onboarding: "indis_onboarding_ok",
-} as const;
-
-type Role = keyof typeof COOKIE_NAMES;
-
+// Just verifies a role's password against Supabase. The "stay unlocked"
+// bit is no longer a cookie set here — it's sessionStorage, written by
+// the caller (components/AuthGate.tsx) on a 200 response, so that being
+// unlocked is scoped to one browser tab instead of the whole browser:
+// open a new tab and it asks again, per what was asked for.
 export async function POST(req: NextRequest) {
   let body: { role?: string; password?: string };
   try {
@@ -50,13 +43,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Incorrect password." }, { status: 401 });
   }
 
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set(COOKIE_NAMES[role as Role], "1", {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    // no maxAge/expires on purpose — see comment above
-  });
-  return res;
+  return NextResponse.json({ ok: true });
 }

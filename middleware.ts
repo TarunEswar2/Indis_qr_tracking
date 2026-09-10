@@ -1,45 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Gates /admin behind the "admin" password, /scan behind the "volunteer"
-// password, and /onboarding behind the "onboarding" password (see
-// supabase/schema.sql's app_passwords table and app/api/auth/route.ts).
-// Anything else on the site is untouched.
-const COOKIE_NAMES = {
-  admin: "indis_admin_ok",
-  volunteer: "indis_volunteer_ok",
-  onboarding: "indis_onboarding_ok",
-} as const;
-
-export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-
-  const role = pathname.startsWith("/admin")
-    ? "admin"
-    : pathname.startsWith("/scan")
-    ? "volunteer"
-    : pathname.startsWith("/onboarding")
-    ? "onboarding"
-    : null;
-
-  if (!role) return NextResponse.next();
-
-  const cookieName = COOKIE_NAMES[role];
-  const authed = req.cookies.get(cookieName)?.value === "1";
-  if (authed) return NextResponse.next();
-
-  const loginUrl = new URL("/login", req.url);
-  loginUrl.searchParams.set("role", role);
-  loginUrl.searchParams.set("next", pathname);
-  return NextResponse.redirect(loginUrl);
+// The /admin, /scan and /onboarding password gates moved to a client-side,
+// per-tab check (components/AuthGate.tsx, using sessionStorage instead of
+// a cookie) so that opening a new tab always asks for the password again —
+// a cookie is shared across every tab in the browser, so it couldn't do
+// that. sessionStorage can only be read in the browser, not here in
+// middleware, so there's nothing left for this file to gate on the server
+// side; it's kept as a no-op (rather than deleted) so it's easy to find if
+// a future server-side check is ever needed again.
+export function middleware(_req: NextRequest) {
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    "/admin",
-    "/admin/:path*",
-    "/scan",
-    "/scan/:path*",
-    "/onboarding",
-    "/onboarding/:path*",
-  ],
+  matcher: [],
 };

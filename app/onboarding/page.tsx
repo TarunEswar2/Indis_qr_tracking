@@ -8,6 +8,7 @@ import {
   supabase,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
+import AuthGate from "@/components/AuthGate";
 
 // Onboarding desk: for walk-ins who show up without a pre-printed
 // pre-registered badge. Staff hand them one of the spare pre-generated
@@ -44,7 +45,7 @@ function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function OnboardingPage() {
+function OnboardingPage() {
   const [tab, setTab] = useState<"qr" | "id">("qr");
   const [serialCode, setSerialCode] = useState("");
   const [name, setName] = useState("");
@@ -149,6 +150,11 @@ export default function OnboardingPage() {
         setError(e.message + " Use a different code, or check /admin if this was a mistake.");
       } else {
         setError("Couldn't register — try again.");
+      }
+      setSerialCode("");
+      decodedOnceRef.current = false;
+      if (tab === "qr") {
+        startScanner();
       }
     } finally {
       setSubmitting(false);
@@ -298,5 +304,13 @@ export default function OnboardingPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OnboardingPageGated() {
+  return (
+    <AuthGate role="onboarding">
+      <OnboardingPage />
+    </AuthGate>
   );
 }

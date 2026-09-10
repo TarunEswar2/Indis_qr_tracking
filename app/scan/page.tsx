@@ -11,6 +11,7 @@ import {
   markItineraryItem,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
+import AuthGate from "@/components/AuthGate";
 
 // ---------------------------------------------------------------------------
 // This screen mirrors prototype_ui/indis-scan-flow.jsx's look AND flow
@@ -570,7 +571,7 @@ function ConfirmedScreen({
 
 // ---------- ROOT ----------
 
-export default function ScanPage() {
+function ScanPage() {
   const [liveDay, setLiveDay] = useState<Day>(1);
   const [screen, setScreen] = useState<"home" | "scan" | "confirmed">("home");
   const [category, setCategory] = useState<Category | null>(null);
@@ -664,5 +665,13 @@ export default function ScanPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ScanPageGated() {
+  return (
+    <AuthGate role="volunteer">
+      <ScanPage />
+    </AuthGate>
   );
 }
