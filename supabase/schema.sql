@@ -79,16 +79,22 @@ create policy "allow all on category_settings" on category_settings
 -- app already uses everywhere else), not just through the login screen.
 -- Fine for a volunteer tool; don't reuse these passwords anywhere sensitive.
 create table if not exists app_passwords (
-  role text primary key,      -- 'admin' or 'volunteer'
+  role text primary key,      -- 'admin', 'volunteer', or 'onboarding'
   password text not null
 );
 
 insert into app_passwords (role, password) values
   ('admin', 'changeme-admin'),
-  ('volunteer', 'changeme-volunteer')
+  ('volunteer', 'changeme-volunteer'),
+  ('onboarding', 'changeme-onboarding')
 on conflict (role) do nothing;
 
 alter table app_passwords enable row level security;
 
 create policy "allow read on app_passwords" on app_passwords
   for select using (true);
+
+-- On-the-spot registration: marks an attendee row created at the
+-- onboarding desk for a walk-in (as opposed to pre-registered before the
+-- event), so admin can see/filter/count them separately.
+alter table attendees add column if not exists is_onspot boolean not null default false;

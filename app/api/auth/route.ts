@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 const COOKIE_NAMES = {
   admin: "indis_admin_ok",
   volunteer: "indis_volunteer_ok",
+  onboarding: "indis_onboarding_ok",
 } as const;
 
 type Role = keyof typeof COOKIE_NAMES;
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
 
   const { role, password } = body;
 
-  if (role !== "admin" && role !== "volunteer") {
+  if (role !== "admin" && role !== "volunteer" && role !== "onboarding") {
     return NextResponse.json({ error: "Invalid role." }, { status: 400 });
   }
   if (typeof password !== "string" || !password) {

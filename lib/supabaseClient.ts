@@ -27,6 +27,7 @@ export type Attendee = {
   serial_code: string;
   name: string;
   organization: string | null;
+  is_onspot: boolean;
 } & Record<ItineraryKey, string | null>; // null = not done, timestamp = done
 
 /**
@@ -70,6 +71,44 @@ export async function markItineraryItem(
   });
 
   if (logError) throw logError;
+}
+
+// ---------------------------------------------------------------------
+// On-the-spot registration. For walk-ins who show up without a
+// pre-printed pre-registered badge: staff at the onboarding desk hand
+// them one of the spare pre-generated QR codes (see QR_generation/),
+// scan or type its serial code here along with their name/org, and this
+// creates a brand-new attendees row for them — tagged is_onspot so admin
+// can see, filter, and count how many walk-ins were onboarded on-site
+// separately from the pre-registered list.
+// ---------------------------------------------------------------------
+
+export class DuplicateSerialError extends Error {}
+
+export async function registerOnspotAttendee(
+  serialCode: string,
+  name: string,
+  organization: string
+) {
+  const { data, error } = await supabase
+    .from("attendees")
+    .insert({
+      serial_code: serialCode,
+      name,
+      organization: organization || null,
+      is_onspot: true,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    // Postgres unique-violation code — this serial code was already used.
+    if (error.code === "23505") {
+      throw new DuplicateSerialError(`"${serialCode}" is already registered.`);
+    }
+    throw error;
+  }
+  return data as Attendee;
 }
 
 // ---------------------------------------------------------------------

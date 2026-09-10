@@ -60,6 +60,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [onspotOnly, setOnspotOnly] = useState(false);
   const [togglingKey, setTogglingKey] = useState<ItineraryKey | null>(null);
 
   async function loadAll() {
@@ -107,14 +108,18 @@ export default function AdminPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return attendees;
-    return attendees.filter(
-      (a) =>
+    return attendees.filter((a) => {
+      if (onspotOnly && !a.is_onspot) return false;
+      if (!q) return true;
+      return (
         a.serial_code.toLowerCase().includes(q) ||
         a.name.toLowerCase().includes(q) ||
         (a.organization ?? "").toLowerCase().includes(q)
-    );
-  }, [attendees, search]);
+      );
+    });
+  }, [attendees, search, onspotOnly]);
+
+  const onspotCount = useMemo(() => attendees.filter((a) => a.is_onspot).length, [attendees]);
 
   const counts = useMemo(() => {
     const totals = {} as Record<ItineraryKey, number>;
@@ -261,6 +266,10 @@ export default function AdminPage() {
               {attendees.reduce((sum, a) => sum + ITINERARY_ITEMS.filter((i) => a[i.key]).length, 0)}
             </p>
           </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-xs text-slate-500 mb-1">On-the-spot registrations</p>
+            <p className="text-2xl font-semibold text-slate-900">{onspotCount}</p>
+          </div>
         </div>
 
         {error && (
@@ -308,12 +317,23 @@ export default function AdminPage() {
         <section className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h2 className="text-sm font-semibold text-slate-900">Attendees</h2>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, serial code, or organization…"
-              className="w-full sm:w-80 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onspotOnly}
+                  onChange={(e) => setOnspotOnly(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                On-the-spot only
+              </label>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name, serial code, or organization…"
+                className="w-full sm:w-80 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              />
+            </div>
           </div>
 
           {loading ? (
@@ -330,6 +350,7 @@ export default function AdminPage() {
                     <th className="p-2 font-medium">Serial</th>
                     <th className="p-2 font-medium">Name</th>
                     <th className="p-2 font-medium">Organization</th>
+                    <th className="p-2 font-medium">Type</th>
                     {ITINERARY_ITEMS.map((item) => (
                       <th key={item.key} className="p-2 font-medium whitespace-nowrap">
                         {item.label}
@@ -343,6 +364,15 @@ export default function AdminPage() {
                       <td className="p-2 font-mono text-xs text-slate-600">{a.serial_code}</td>
                       <td className="p-2 font-medium text-slate-900">{a.name}</td>
                       <td className="p-2 text-slate-600">{a.organization ?? "—"}</td>
+                      <td className="p-2">
+                        {a.is_onspot ? (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-700 text-xs font-medium px-2 py-0.5 whitespace-nowrap">
+                            On-the-spot
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 text-xs">Pre-registered</span>
+                        )}
+                      </td>
                       {ITINERARY_ITEMS.map((item) => {
                         const done = Boolean(a[item.key]);
                         return (
