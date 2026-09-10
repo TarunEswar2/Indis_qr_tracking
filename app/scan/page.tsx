@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Attendee,
+  CategorySettings,
   ItineraryKey,
   getAttendeeBySerial,
+  getCategorySettings,
   markItineraryItem,
 } from "@/lib/supabaseClient";
 
@@ -15,16 +17,16 @@ import {
 // a day + category (Kit / Lunch / High Tea / Gala), THEN scans or looks up
 // an attendee — the scan/lookup marks just that one category.
 //
-// Your schema doesn't have a per-day column for every category (kit and
-// gala are one-time, not per-day), so CATEGORY_TO_KEY below is the mapping
-// between the prototype's "day + abstract category" concept and your real
-// itinerary columns. Change this mapping (not the schema) if you want to
-// move Kit/Gala to a different day, or see the earlier chat message for
-// how to make categories fully data-driven instead of hardcoded here.
+// Real event structure (3 days):
+//   Day 1: Conference Kit, Lunch, High Tea
+//   Day 2: Lunch, High Tea
+//   Day 3: Lunch, High Tea, Gala Dinner
+// keyFor() below maps that day+category shape onto the real Supabase
+// columns (kit_received, lunch_day1..3, high_tea_day1..3, gala_dinner).
 // ---------------------------------------------------------------------------
 
 type Category = "kit" | "lunch" | "highTea" | "gala";
-type Day = 1 | 2;
+type Day = 1 | 2 | 3;
 
 const CATEGORY_LABEL: Record<Category, string> = {
   kit: "Conference Kit",
@@ -35,20 +37,28 @@ const CATEGORY_LABEL: Record<Category, string> = {
 
 const DAY_CATEGORIES: Record<Day, Category[]> = {
   1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea", "gala"],
+  2: ["lunch", "highTea"],
+  3: ["lunch", "highTea", "gala"],
 };
 
-// day + category -> real Supabase column, or null if that combo doesn't
-// apply (e.g. there's no lunch on... there's no "kit" on day 2).
+// day + category -> real Supabase column, or null if that combo doesn't apply.
 function keyFor(day: Day, category: Category): ItineraryKey | null {
   if (category === "kit") return day === 1 ? "kit_received" : null;
-  if (category === "lunch") return day === 1 ? "lunch_day1" : "lunch_day2";
-  if (category === "highTea") return day === 1 ? "high_tea_day1" : "high_tea_day2";
-  if (category === "gala") return day === 2 ? "gala_dinner" : null;
+  if (category === "lunch") {
+    if (day === 1) return "lunch_day1";
+    if (day === 2) return "lunch_day2";
+    return "lunch_day3";
+  }
+  if (category === "highTea") {
+    if (day === 1) return "high_tea_day1";
+    if (day === 2) return "high_tea_day2";
+    return "high_tea_day3";
+  }
+  if (category === "gala") return day === 3 ? "gala_dinner" : null;
   return null;
 }
 
-const TODAY: Day = 1; // change to 2 once day 1 has actually passed at the event
+const TODAY: Day = 1; // change to 2 or 3 as the event moves along
 
 const SCANNER_ELEMENT_ID = "reader";
 
@@ -100,6 +110,10 @@ function LockedTag() {
   return <span className="pill pill-confirmed">Done</span>;
 }
 
+function OffTag() {
+  return <span className="pill pill-off">Closed</span>;
+}
+
 function DelegatePreview({ attendee }: { attendee: Attendee }) {
   return (
     <div className="delegate-block">
@@ -118,11 +132,13 @@ function HomeScreen({
   setDay,
   today,
   onPick,
+  categorySettings,
 }: {
   day: Day;
   setDay: (d: Day) => void;
   today: Day;
   onPick: (c: Category) => void;
+  categorySettings: CategorySettings | null;
 }) {
   const cats = DAY_CATEGORIES[day];
   const isToday = day === today;
@@ -136,7 +152,7 @@ function HomeScreen({
       </div>
 
       <div className="day-switch">
-        {([1, 2] as Day[]).map((d) => (
+        {([1, 2, 3] as Day[]).map((d) => (
           <button
             key={d}
             className={`day-tab ${d === day ? "day-tab-active" : ""}`}
@@ -151,17 +167,31 @@ function HomeScreen({
       <p className="day-sub">Select what you're scanning for</p>
 
       <div className="cat-list">
-        {cats.map((c) => (
-          <button
-            key={c}
-            className={`cat-card ${!isToday ? "cat-card-locked" : ""}`}
-            onClick={() => isToday && onPick(c)}
-            disabled={!isToday}
-          >
-            <span className="cat-name">{CATEGORY_LABEL[c]}</span>
-            {isToday ? <ArrowRight className="cat-arrow" /> : isPast ? <LockedTag /> : null}
-          </button>
-        ))}
+        {cats.map((c) => {
+          const itemKey = keyFor(day, c);
+          // Admin turned this off in the dashboard. A category with no
+          // itemKey (doesn't apply to this day) is never selectable
+          // anyway via DAY_CATEGORIES, so this only affects real ones.
+          const closedByAdmin = Boolean(itemKey && categorySettings && !categorySettings[itemKey]);
+          const selectable = isToday && !closedByAdmin;
+          return (
+            <button
+              key={c}
+              className={`cat-card ${!selectable ? "cat-card-locked" : ""}`}
+              onClick={() => selectable && onPick(c)}
+              disabled={!selectable}
+            >
+              <span className="cat-name">{CATEGORY_LABEL[c]}</span>
+              {closedByAdmin ? (
+                <OffTag />
+              ) : isToday ? (
+                <ArrowRight className="cat-arrow" />
+              ) : isPast ? (
+                <LockedTag />
+              ) : null}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -413,7 +443,7 @@ function ConfirmedScreen({
   onBackToScanner: () => void;
 }) {
   const rows: Category[] = ["kit", "lunch", "highTea", "gala"];
-  const days: Day[] = [1, 2];
+  const days: Day[] = [1, 2, 3];
 
   return (
     <div className="screen">
@@ -481,8 +511,25 @@ export default function ScanPage() {
   const [idValue, setIdValue] = useState("");
   const [attendee, setAttendee] = useState<Attendee | null>(null);
   const [visit, setVisit] = useState(0);
+  const [categorySettings, setCategorySettings] = useState<CategorySettings | null>(null);
+
+  useEffect(() => {
+    getCategorySettings()
+      .then(setCategorySettings)
+      .catch(() => {
+        // category_settings table missing/unreachable — fall back to
+        // "everything open" rather than blocking the whole scanner.
+        setCategorySettings(null);
+      });
+  }, []);
 
   function pickCategory(c: Category) {
+    const itemKey = keyFor(day, c);
+    if (itemKey && categorySettings && !categorySettings[itemKey]) {
+      // Shouldn't normally happen (the card is disabled), but guards
+      // against a stale render if the admin flips a toggle mid-visit.
+      return;
+    }
     setCategory(c);
     setTab("qr");
     setIdValue("");
@@ -617,6 +664,7 @@ export default function ScanPage() {
         .cat-arrow { color: var(--grey-500); }
         .pill { font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 100px; }
         .pill-confirmed { background: var(--blue-dim); color: var(--blue); }
+        .pill-off { background: var(--grey-300); color: var(--grey-700); }
 
         /* SCAN SCREEN */
         .scan-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
@@ -690,7 +738,7 @@ export default function ScanPage() {
         .delegate-role { font-size: 14px; color: var(--grey-700); margin: 0; line-height: 1.5; }
 
         .table { border: 1px solid var(--grey-300); border-radius: 14px; overflow: hidden; margin-bottom: 24px; }
-        .table-row { display: grid; grid-template-columns: repeat(2, 1fr); }
+        .table-row { display: grid; grid-template-columns: repeat(3, 1fr); }
         .table-row + .table-row { border-top: 1px solid var(--grey-300); }
         .table-cell { padding: 12px 10px; border-right: 1px solid var(--grey-300); display: flex; flex-direction: column; gap: 3px; }
         .table-cell:last-child { border-right: none; }
@@ -708,7 +756,15 @@ export default function ScanPage() {
       `}</style>
 
       <div className="phone">
-        {screen === "home" && <HomeScreen day={day} setDay={setDay} today={TODAY} onPick={pickCategory} />}
+        {screen === "home" && (
+          <HomeScreen
+            day={day}
+            setDay={setDay}
+            today={TODAY}
+            onPick={pickCategory}
+            categorySettings={categorySettings}
+          />
+        )}
         {screen === "scan" && category && (
           <ScanScreen
             key={`scan-${visit}`}

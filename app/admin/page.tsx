@@ -1,62 +1,269 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Attendee, ITINERARY_ITEMS, supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Attendee,
+  CategorySettings,
+  ITINERARY_ITEMS,
+  ItineraryKey,
+  getCategorySettings,
+  setCategoryEnabled,
+  supabase,
+} from "@/lib/supabaseClient";
 
-// Bare-bones admin table: lists every attendee and their itinerary
-// status. This is a functional stub for the data layer, not the final
-// design — swap the markup once the dashboard UX is decided.
+// Admin dashboard: toggle which categories are open for scanning, search
+// attendees and see their full status, and export everything as a CSV
+// (opens fine in Excel/Sheets — no extra library needed, unlike a real
+// .xlsx which would mean installing something like `xlsx` on top of
+// everything else this project already had to fight with npm/native
+// deps for).
+//
+// NOTE: this page has no login/auth gate — same as the rest of the app
+// right now (RLS is wide open). Anyone with the /admin URL can flip
+// category toggles. Fine for a small trusted-organizer setup; worth
+// locking down before handing the URL out more broadly.
+
+function csvEscape(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 export default function AdminPage() {
   const [attendees, setAttendees] = useState<Attendee[]>([]);
+  const [settings, setSettings] = useState<CategorySettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [togglingKey, setTogglingKey] = useState<ItineraryKey | null>(null);
+
+  async function loadAll() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [{ data, error: fetchError }, categorySettings] = await Promise.all([
+        supabase.from("attendees").select("*").order("name"),
+        getCategorySettings(),
+      ]);
+      if (fetchError) throw fetchError;
+      setAttendees((data ?? []) as Attendee[]);
+      setSettings(categorySettings);
+    } catch (e: any) {
+      setError(
+        e?.message?.includes("category_settings")
+          ? "category_settings table not found — run the latest supabase/schema.sql migration, then reload."
+          : "Couldn't load data from Supabase."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    supabase
-      .from("attendees")
-      .select("*")
-      .order("name")
-      .then(({ data, error }) => {
-        if (!error && data) setAttendees(data as Attendee[]);
-        setLoading(false);
-      });
+    loadAll();
   }, []);
 
+  async function toggleCategory(key: ItineraryKey) {
+    if (!settings) return;
+    const next = !settings[key];
+    setTogglingKey(key);
+    // optimistic update
+    setSettings({ ...settings, [key]: next });
+    try {
+      await setCategoryEnabled(key, next);
+    } catch {
+      // revert on failure
+      setSettings({ ...settings, [key]: !next });
+      setError(`Couldn't update "${key}" — try again.`);
+    } finally {
+      setTogglingKey(null);
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return attendees;
+    return attendees.filter(
+      (a) =>
+        a.serial_code.toLowerCase().includes(q) ||
+        a.name.toLowerCase().includes(q) ||
+        (a.organization ?? "").toLowerCase().includes(q)
+    );
+  }, [attendees, search]);
+
+  const counts = useMemo(() => {
+    const totals = {} as Record<ItineraryKey, number>;
+    for (const item of ITINERARY_ITEMS) {
+      totals[item.key] = attendees.filter((a) => Boolean(a[item.key])).length;
+    }
+    return totals;
+  }, [attendees]);
+
+  function exportCsv() {
+    const header = [
+      "serial_code",
+      "name",
+      "organization",
+      ...ITINERARY_ITEMS.map((i) => i.key),
+    ];
+    const rows = attendees.map((a) => [
+      a.serial_code,
+      a.name,
+      a.organization ?? "",
+      ...ITINERARY_ITEMS.map((i) => (a[i.key] ? a[i.key]! : "")),
+    ]);
+    downloadCsv(
+      `indis-attendees-${new Date().toISOString().slice(0, 10)}.csv`,
+      [header, ...rows]
+    );
+  }
+
   return (
-    <main className="min-h-screen p-6">
-      <h1 className="text-xl font-semibold mb-4">Admin Dashboard</h1>
-      {loading ? (
-        <p>Loading…</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm border-collapse">
-            <thead>
-              <tr className="text-left border-b border-slate-300">
-                <th className="p-2">Name</th>
-                <th className="p-2">Serial</th>
-                {ITINERARY_ITEMS.map(({ key, label }) => (
-                  <th key={key} className="p-2">
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {attendees.map((a) => (
-                <tr key={a.id} className="border-b border-slate-100">
-                  <td className="p-2">{a.name}</td>
-                  <td className="p-2">{a.serial_code}</td>
-                  {ITINERARY_ITEMS.map(({ key }) => (
-                    <td key={key} className="p-2">
-                      {a[key] ? "✓" : ""}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <main className="min-h-screen bg-slate-50 p-6 md:p-10">
+      <style>{`
+        .switch { position: relative; width: 40px; height: 22px; border-radius: 999px; cursor: pointer; border: none; transition: background 0.15s; flex-shrink: 0; }
+        .switch-on { background: #2F5CFF; }
+        .switch-off { background: #D1D5DB; }
+        .switch-off:disabled, .switch-on:disabled { opacity: 0.6; cursor: default; }
+        .switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 999px; background: white; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+        .switch-on .switch-knob { transform: translateX(18px); }
+      `}</style>
+
+      <div className="max-w-6xl mx-auto">
+        <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">INDIS Admin Dashboard</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              {attendees.length} attendee{attendees.length === 1 ? "" : "s"} total
+            </p>
+          </div>
+          <button
+            onClick={exportCsv}
+            disabled={loading || attendees.length === 0}
+            className="rounded-lg bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-40"
+          >
+            Export all as CSV
+          </button>
         </div>
-      )}
+
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-3">
+            {error}
+          </div>
+        )}
+
+        {/* Category on/off toggles */}
+        <section className="mb-8 bg-white rounded-xl border border-slate-200 p-5">
+          <h2 className="text-sm font-semibold text-slate-900 mb-1">Scannable categories</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Turn a category off to stop volunteers from scanning it (e.g. once Day 1 lunch service ends). Takes effect on the scanner immediately.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {ITINERARY_ITEMS.map((item) => {
+              const enabled = settings ? settings[item.key] : true;
+              return (
+                <div
+                  key={item.key}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-4 py-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">{item.label}</p>
+                    <p className="text-xs text-slate-500">
+                      {counts[item.key] ?? 0} of {attendees.length} done
+                    </p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={enabled}
+                    disabled={!settings || togglingKey === item.key}
+                    onClick={() => toggleCategory(item.key)}
+                    className={`switch ${enabled ? "switch-on" : "switch-off"}`}
+                  >
+                    <span className="switch-knob" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Search + status table */}
+        <section className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h2 className="text-sm font-semibold text-slate-900">Attendees</h2>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, serial code, or organization…"
+              className="w-full sm:w-80 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
+
+          {loading ? (
+            <p className="text-sm text-slate-500 py-6">Loading…</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-slate-500 py-6">
+              {search ? "No attendee matches that search." : "No attendees yet."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-left border-b border-slate-200 text-slate-500">
+                    <th className="p-2 font-medium">Serial</th>
+                    <th className="p-2 font-medium">Name</th>
+                    <th className="p-2 font-medium">Organization</th>
+                    {ITINERARY_ITEMS.map((item) => (
+                      <th key={item.key} className="p-2 font-medium whitespace-nowrap">
+                        {item.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((a) => (
+                    <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="p-2 font-mono text-xs text-slate-600">{a.serial_code}</td>
+                      <td className="p-2 font-medium text-slate-900">{a.name}</td>
+                      <td className="p-2 text-slate-600">{a.organization ?? "—"}</td>
+                      {ITINERARY_ITEMS.map((item) => {
+                        const done = Boolean(a[item.key]);
+                        return (
+                          <td key={item.key} className="p-2">
+                            <span
+                              className={
+                                done
+                                  ? "inline-flex items-center rounded-full bg-blue-50 text-blue-600 text-xs font-medium px-2 py-0.5"
+                                  : "text-slate-300 text-xs"
+                              }
+                            >
+                              {done ? "Done" : "—"}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   );
 }

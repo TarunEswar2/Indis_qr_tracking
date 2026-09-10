@@ -8,11 +8,19 @@ create table if not exists attendees (
   kit_received timestamptz,
   lunch_day1 timestamptz,
   lunch_day2 timestamptz,
+  lunch_day3 timestamptz,
   high_tea_day1 timestamptz,
   high_tea_day2 timestamptz,
+  high_tea_day3 timestamptz,
   gala_dinner timestamptz,
   created_at timestamptz default now()
 );
+
+-- Adds Day 3 lunch/high tea columns for an event that already has an
+-- `attendees` table from before (the create table above only runs for a
+-- brand new table). Safe to run on a fresh table too.
+alter table attendees add column if not exists lunch_day3 timestamptz;
+alter table attendees add column if not exists high_tea_day3 timestamptz;
 
 create table if not exists scan_log (
   id uuid primary key default gen_random_uuid(),
@@ -32,4 +40,29 @@ create policy "allow all on attendees" on attendees
   for all using (true) with check (true);
 
 create policy "allow all on scan_log" on scan_log
+  for all using (true) with check (true);
+
+-- Added for the admin dashboard: lets an admin turn a category on/off
+-- (e.g. close "Gala Dinner" scanning once the event moves on) without
+-- touching code. One row per itinerary key; missing rows default to
+-- enabled in the app.
+create table if not exists category_settings (
+  key text primary key,
+  enabled boolean not null default true
+);
+
+insert into category_settings (key, enabled) values
+  ('kit_received', true),
+  ('lunch_day1', true),
+  ('lunch_day2', true),
+  ('lunch_day3', true),
+  ('high_tea_day1', true),
+  ('high_tea_day2', true),
+  ('high_tea_day3', true),
+  ('gala_dinner', true)
+on conflict (key) do nothing;
+
+alter table category_settings enable row level security;
+
+create policy "allow all on category_settings" on category_settings
   for all using (true) with check (true);
