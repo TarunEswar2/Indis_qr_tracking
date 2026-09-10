@@ -41,7 +41,12 @@ function csvEscape(value: string): string {
 
 function downloadCsv(filename: string, rows: string[][]) {
   const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  // The "—" in labels like "Lunch — Day 1" is a non-ASCII character —
+  // without a UTF-8 BOM at the start of the file, Excel/Sheets often
+  // guesses the wrong encoding and turns it into garbage ("â€"" etc).
+  // Prepending the BOM makes them detect UTF-8 correctly.
+  const csvWithBom = "﻿" + csv;
+  const blob = new Blob([csvWithBom], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
