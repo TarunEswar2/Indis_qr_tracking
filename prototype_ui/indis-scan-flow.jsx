@@ -162,6 +162,16 @@ function ExportIcon(props) {
   );
 }
 
+function UserPlusIcon(props) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M18 8v6M15 11h6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function LockIcon(props) {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" {...props}>
@@ -484,6 +494,135 @@ function StatusDot({ status }) {
   return <span className="attendee-status-no">—</span>;
 }
 
+function OnboardFlow({ onBack, onboardCount, onRegister }) {
+  const [tab, setTab] = useState("qr");
+  const [scanning, setScanning] = useState(false);
+  const [serial, setSerial] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [org, setOrg] = useState("");
+  const [done, setDone] = useState(false);
+
+  const canRegister = serial.trim() && fullName.trim();
+
+  const runScan = () => {
+    if (scanning) return;
+    setScanning(true);
+    setTimeout(() => {
+      setScanning(false);
+      setSerial("ONSPOT007");
+      setTab("id");
+    }, 900);
+  };
+
+  const handleRegister = () => {
+    if (!canRegister) return;
+    onRegister();
+    setDone(true);
+  };
+
+  const registerAnother = () => {
+    setSerial("");
+    setFullName("");
+    setOrg("");
+    setTab("qr");
+    setDone(false);
+  };
+
+  if (done) {
+    return (
+      <div className="screen">
+        <div className="scan-header">
+          <button className="icon-btn" onClick={onBack} aria-label="Back">
+            <BackArrow />
+          </button>
+        </div>
+        <div className="confirm-block">
+          <div className="check-circle">
+            <Check width="30" height="30" />
+          </div>
+          <p className="confirm-context">Walk-in registered</p>
+          <p className="confirm-title">{fullName}</p>
+          <p className="confirm-time">{serial} is now linked to their record</p>
+        </div>
+        <button className="primary-btn confirm-back-btn" onClick={registerAnother}>
+          Register another
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen">
+      <div className="scan-header">
+        <button className="icon-btn" onClick={onBack} aria-label="Back">
+          <BackArrow />
+        </button>
+        <h1 className="scan-title">Onboard walk-in</h1>
+      </div>
+
+      <p className="onboard-count">On-the-spot registrations so far: {onboardCount}</p>
+
+      <div className="tab-row-wrap">
+        <div className="tabs">
+          <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => setTab("qr")}>
+            Scan QR
+          </button>
+          <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => setTab("id")}>
+            Type ID
+          </button>
+        </div>
+        <div className="tab-row-baseline" />
+      </div>
+
+      {tab === "qr" ? (
+        <div className="qr-pane">
+          <div className="viewfinder">
+            <span className="corner corner-tl" />
+            <span className="corner corner-tr" />
+            <span className="corner corner-bl" />
+            <span className="corner corner-br" />
+            {scanning && <span className="scan-line" />}
+          </div>
+          <p className="qr-help">Scan the QR printed on the walk-in's new ID tag</p>
+          <button className="demo-btn" onClick={runScan} disabled={scanning}>
+            {scanning ? "Scanning…" : "Simulate scan (demo)"}
+          </button>
+        </div>
+      ) : (
+        <div className="onboard-form">
+          <label className="id-label">Serial / ID on the QR code</label>
+          <input
+            className="id-input onboard-field"
+            placeholder="e.g. ONSPOT007"
+            value={serial}
+            onChange={(e) => setSerial(e.target.value)}
+          />
+
+          <label className="id-label">Full name</label>
+          <input
+            className="id-input onboard-field"
+            placeholder="Delegate's name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+          />
+
+          <label className="id-label">Organization (optional)</label>
+          <input
+            className="id-input onboard-field"
+            placeholder="College / company"
+            value={org}
+            onChange={(e) => setOrg(e.target.value)}
+          />
+
+          <button className="primary-btn onboard-register-btn" onClick={handleRegister} disabled={!canRegister}>
+            Register
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminScreen({
   adminDay,
   onChangeAdminDay,
@@ -493,6 +632,8 @@ function AdminScreen({
   attendeeTab,
   onSetAttendeeTab,
 }) {
+  const [view, setView] = useState("dashboard");
+  const [onboardCount, setOnboardCount] = useState(0);
   const dayCats = DAY_CATEGORIES[adminDay];
   const masterOn = dayCats.every((c) => categoryEnabled[adminDay][c]);
 
@@ -540,8 +681,23 @@ function AdminScreen({
     URL.revokeObjectURL(url);
   };
 
+  if (view === "onboard") {
+    return (
+      <OnboardFlow
+        onBack={() => setView("dashboard")}
+        onboardCount={onboardCount}
+        onRegister={() => setOnboardCount((c) => c + 1)}
+      />
+    );
+  }
+
   return (
     <div className="screen admin-screen">
+      <button className="onboard-entry-btn" onClick={() => setView("onboard")}>
+        <UserPlusIcon />
+        Onboard walk-in
+      </button>
+
       <div className="admin-section-head">
         <h2 className="admin-h2">Categories</h2>
         <div className="admin-day-nav">
@@ -1070,6 +1226,44 @@ export default function App() {
         .attendee-status-yes { color: var(--success); }
         .attendee-status-no { color: var(--grey-300); }
         .attendee-fraction { color: var(--grey-700); font-weight: 600; }
+
+        .onboard-entry-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          width: 100%;
+          border: 1.5px dashed var(--black);
+          background: transparent;
+          color: var(--black);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          padding: 12px 0;
+          border-radius: 12px;
+          cursor: pointer;
+          margin-bottom: 24px;
+        }
+        .onboard-entry-btn:active {
+          background: var(--black-wash);
+        }
+
+        .onboard-count {
+          font-size: 12px;
+          color: var(--grey-500);
+          margin: 0 0 16px;
+        }
+        .onboard-form {
+          display: flex;
+          flex-direction: column;
+          margin-top: 8px;
+        }
+        .onboard-field {
+          margin-bottom: 16px;
+        }
+        .onboard-register-btn {
+          margin-top: 4px;
+        }
 
         /* HOME */
         .topline {
