@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Attendee,
   DuplicateSerialError,
+  getAttendeeBySerial,
   registerOnspotAttendee,
   supabase,
 } from "@/lib/supabaseClient";
@@ -51,17 +52,18 @@ function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
 }
 
 export default function OnboardFlow({ onBack }: { onBack: () => void }) {
+  // "qr" shows only the camera; "id" shows only the name/org form —
+  // never both at once. A successful scan switches straight to "id" so
+  // the tab bar itself becomes the "next screen" transition (matching
+  // prototype_ui/indis-scan-flow.jsx's OnboardFlow exactly), rather than
+  // a separate hidden step.
   const [tab, setTab] = useState<"qr" | "id">("qr");
-  // Only relevant while tab === "qr": "scan" shows just the camera (no
-  // fields yet); "details" shows just the name/org fields (camera
-  // hidden) once a code's been captured. Typing the ID manually
-  // (tab === "id") skips this and shows the fields right away.
-  const [qrStep, setQrStep] = useState<"scan" | "details">("scan");
   const [serialCode, setSerialCode] = useState("");
   const [name, setName] = useState("");
   const [organization, setOrganization] = useState("");
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scanWarning, setScanWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [registered, setRegistered] = useState<Attendee | null>(null);
@@ -99,9 +101,7 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
           (decodedText: string) => {
             if (decodedOnceRef.current) return;
             decodedOnceRef.current = true;
-            setSerialCode(decodedText.trim());
-            setQrStep("details");
-            stopScanner();
+            handleDecoded(decodedText.trim());
           },
           () => {}
         );
@@ -115,6 +115,32 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
         setCameraError("Couldn't access the camera. Use the Type ID tab instead.");
       }
     });
+  }
+
+  // Checks the scanned code against the attendees table before doing
+  // anything else — a code that's already registered (either a
+  // pre-registered badge, or someone already onboarded) never gets to
+  // the name/org form at all; it just shows a warning right here on the
+  // scan screen and starts scanning again.
+  async function handleDecoded(serial: string) {
+    stopScanner();
+    let alreadyRegistered = true;
+    try {
+      await getAttendeeBySerial(serial);
+    } catch {
+      alreadyRegistered = false;
+    }
+
+    if (alreadyRegistered) {
+      setScanWarning(`"${serial}" is already registered.`);
+      decodedOnceRef.current = false;
+      startScanner();
+      return;
+    }
+
+    setScanWarning(null);
+    setSerialCode(serial);
+    setTab("id");
   }
 
   async function stopScanner() {
@@ -135,7 +161,7 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
   }
 
   useEffect(() => {
-    if (tab === "qr" && qrStep === "scan" && !registered) {
+    if (tab === "qr" && !registered) {
       decodedOnceRef.current = false;
       startScanner();
     } else {
@@ -145,7 +171,7 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
       stopScanner();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, qrStep, registered]);
+  }, [tab, registered]);
 
   function switchTab(next: "qr" | "id") {
     if (next === tab) return;
@@ -155,14 +181,8 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
       // wherever the previous attempt left off.
       setSerialCode("");
       setError(null);
-      setQrStep("scan");
+      setScanWarning(null);
     }
-  }
-
-  function rescan() {
-    setSerialCode("");
-    setError(null);
-    setQrStep("scan");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -182,9 +202,7 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
       }
       setSerialCode("");
       decodedOnceRef.current = false;
-      if (tab === "qr") {
-        setQrStep("scan");
-      }
+      setTab("qr");
     } finally {
       setSubmitting(false);
     }
@@ -196,9 +214,9 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
     setName("");
     setOrganization("");
     setError(null);
+    setScanWarning(null);
     decodedOnceRef.current = false;
     setTab("qr");
-    setQrStep("scan");
   }
 
   if (registered) {
@@ -252,21 +270,19 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
         On-the-spot registrations so far: <b>{todayCount ?? "…"}</b>
       </p>
 
-      {!(tab === "qr" && qrStep === "details") && (
-        <div className="tab-row-wrap">
-          <div className="tabs">
-            <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => switchTab("qr")} type="button">
-              Scan QR
-            </button>
-            <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => switchTab("id")} type="button">
-              Type ID
-            </button>
-          </div>
-          <div className="tab-row-baseline" />
+      <div className="tab-row-wrap">
+        <div className="tabs">
+          <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => switchTab("qr")} type="button">
+            Scan QR
+          </button>
+          <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => switchTab("id")} type="button">
+            Type ID
+          </button>
         </div>
-      )}
+        <div className="tab-row-baseline" />
+      </div>
 
-      {tab === "qr" && qrStep === "scan" && (
+      {tab === "qr" ? (
         <div className="qr-pane">
           <div className="viewfinder">
             <div id={SCANNER_ELEMENT_ID} className="viewfinder-camera" />
@@ -278,20 +294,14 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
           </div>
           {cameraError ? (
             <p className="qr-help qr-help-warn">{cameraError}</p>
+          ) : scanWarning ? (
+            <p className="qr-help qr-help-warn">{scanWarning} Try a different spare code.</p>
           ) : (
             <p className="qr-help">Scan the QR printed on the walk-in's new ID tag</p>
           )}
         </div>
-      )}
-
-      {(tab === "id" || qrStep === "details") && (
+      ) : (
         <form onSubmit={handleSubmit} className="onboard-form">
-          {tab === "qr" && (
-            <button type="button" className="onboard-rescan-link" onClick={rescan}>
-              &larr; Scan a different code
-            </button>
-          )}
-
           <label className="id-label" htmlFor="onboard-serial">
             Serial / ID on the QR code
           </label>
