@@ -15,6 +15,7 @@ import {
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
 import AuthGate from "@/components/AuthGate";
+import OnboardFlow from "@/components/OnboardFlow";
 
 // ---------------------------------------------------------------------------
 // This screen mirrors prototype_ui/indis-scan-flow.jsx's AdminScreen exactly
@@ -106,6 +107,16 @@ function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function UserPlusIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M18 8v6M15 11h6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
   return (
     <button
@@ -155,6 +166,7 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 function AdminPage() {
+  const [view, setView] = useState<"dashboard" | "onboard">("dashboard");
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [settings, setSettings] = useState<CategorySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -332,6 +344,14 @@ function AdminPage() {
       <div className="phone admin-phone">
         <TopNav />
         <div className="app-body">
+          {view === "onboard" ? (
+            <OnboardFlow
+              onBack={() => {
+                setView("dashboard");
+                loadAll();
+              }}
+            />
+          ) : (
           <div className="screen admin-screen">
             {loading ? (
               <p className="qr-help">Loading…</p>
@@ -342,6 +362,11 @@ function AdminPage() {
                     <p className="id-error-text">{error}</p>
                   </div>
                 )}
+
+                <button className="onboard-entry-btn" onClick={() => setView("onboard")} type="button">
+                  <UserPlusIcon />
+                  Onboard walk-in
+                </button>
 
                 {/* Live day */}
                 <div className="admin-section-head">
@@ -484,6 +509,7 @@ function AdminPage() {
               </>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>

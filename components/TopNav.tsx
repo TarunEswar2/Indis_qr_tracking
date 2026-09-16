@@ -5,17 +5,18 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/scan", label: "Volunteer" },
-  { href: "/onboarding", label: "Onboarding" },
   { href: "/admin", label: "Admin" },
 ];
 
 /**
  * The prototype's "app-topbar" — an "INDIS 2026" mark above a pill-shaped
  * row of tabs — rendered with real <Link>s instead of client-side state.
- * Each destination is still gated by components/AuthGate.tsx (Volunteer
- * and Onboarding share one "staff" password, Admin has its own), so
- * switching tabs here never bypasses a password gate; it's just a fast
- * way to move between the three roles without typing a URL.
+ * Just two destinations now (matching prototype_ui/indis-scan-flow.jsx):
+ * Volunteer ("staff" password) and Admin (its own password) — onboarding
+ * walk-ins now live inside Admin itself (see components/OnboardFlow.tsx),
+ * rather than being a separate top-level tab. Each destination is still
+ * gated by components/AuthGate.tsx, so switching tabs here never bypasses
+ * a password gate.
  */
 export default function TopNav() {
   const pathname = usePathname();
