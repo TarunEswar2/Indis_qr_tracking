@@ -2,54 +2,68 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { AppUser, UserRole } from "@/lib/supabaseClient";
 
-const ROLE_HOME: Record<string, string> = {
+// The one login screen for the whole app — replaces the old separate
+// admin/volunteer password screens. Everyone (volunteer or admin) types
+// their own username + password here; app_users (supabase/schema.sql)
+// decides their role, and that role decides where they land:
+//   admin -> /admin, volunteer -> /scan
+// components/AuthGate.tsx sends people here whenever it finds no one
+// signed in (and still separately refuses a signed-in-but-wrong-role
+// visit to a page, e.g. a volunteer hitting /admin directly).
+
+const ROLE_HOME: Record<UserRole, string> = {
   admin: "/admin",
   volunteer: "/scan",
-  onboarding: "/onboarding",
 };
+
+const SESSION_KEY = "indis_user";
+
+function LockIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 function LoginForm() {
   const params = useSearchParams();
-  const roleParam = params.get("role");
-  const role = roleParam && roleParam in ROLE_HOME ? roleParam : "volunteer";
-  const next = params.get("next") || ROLE_HOME[role];
+  const next = params.get("next");
 
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!password || loading) return;
+  async function submit() {
+    if (!username.trim() || !password.trim() || loading) return;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, password }),
+        body: JSON.stringify({ username, password }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error ?? "Incorrect password.");
+        setError(body?.error ?? "Incorrect username or password.");
         return;
       }
-      // Mirrors what components/AuthGate.tsx sets for the same role, so
-      // landing here directly (rather than hitting the gate inline on
-      // /admin, /scan or /onboarding) doesn't prompt a second time in
-      // this same tab.
+      const loggedInUser: AppUser = await res.json();
       try {
-        sessionStorage.setItem(`indis_${role}_ok`, "1");
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(loggedInUser));
       } catch {}
-      // A full page load (not the Next.js client router) so the browser
-      // sends the just-set cookie on this exact next request and the
-      // middleware sees it immediately — a client-side router.replace()
-      // can navigate using an already-cached version of the target page
-      // from before the cookie existed, which is what forced a second
-      // "Continue" click to actually get through.
-      window.location.href = next;
-      return;
+      // A next= is honored only if it actually matches where this role is
+      // allowed to go — otherwise (or if there's no next=) send them to
+      // their own home page. This is also why a volunteer who somehow had
+      // ?next=/admin in the URL still lands on /scan, not /admin.
+      const home = ROLE_HOME[loggedInUser.role];
+      const destination = next && next.startsWith(home) ? next : home;
+      window.location.href = destination;
     } catch {
       setError("Something went wrong — try again.");
     } finally {
@@ -58,118 +72,55 @@ function LoginForm() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--grey-100, #F6F6F7)",
-        padding: 16,
-        fontFamily: "var(--font-body), Helvetica, Arial, sans-serif",
-        boxSizing: "border-box",
-      }}
-    >
-      <form
-        onSubmit={handleSubmit}
-        style={{
-          background: "var(--white, #FFFFFF)",
-          padding: 32,
-          borderRadius: 20,
-          width: "100%",
-          maxWidth: 360,
-          boxShadow: "0 16px 40px rgba(10,10,12,0.08)",
-          border: "1.5px solid var(--black, #2B2B30)",
-          boxSizing: "border-box",
-        }}
-      >
-        <p
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
-            color: "var(--accent, #2B4FBE)",
-            margin: "0 0 4px",
-          }}
-        >
-          INDIS 2026
-        </p>
-        <h1
-          style={{
-            fontSize: 21,
-            fontWeight: 700,
-            fontFamily: "var(--font-heading), Helvetica, Arial, sans-serif",
-            margin: "0 0 6px",
-            color: "var(--black, #2B2B30)",
-          }}
-        >
-          {role === "admin"
-            ? "Admin access"
-            : role === "onboarding"
-            ? "Onboarding desk access"
-            : "Volunteer access"}
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--grey-500, #8B8B93)", margin: "0 0 22px" }}>
-          Enter the {role} password to continue.
-        </p>
-
-        <input
-          type="password"
-          autoFocus
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 12,
-            border: "1.5px solid var(--black, #2B2B30)",
-            marginBottom: 12,
-            fontSize: 15,
-            fontFamily: "inherit",
-            boxSizing: "border-box",
-            outline: "none",
-          }}
-        />
-
-        {error && (
-          <p
-            style={{
-              color: "var(--error, #C0392B)",
-              background: "var(--error-wash, rgba(192,57,43,0.12))",
-              borderRadius: 10,
-              padding: "10px 12px",
-              fontSize: 13,
-              fontWeight: 600,
-              margin: "0 0 12px",
-            }}
-          >
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading || !password}
-          style={{
-            width: "100%",
-            padding: "15px 0",
-            borderRadius: 12,
-            border: `1.5px solid ${loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)"}`,
-            background: loading || !password ? "var(--grey-300, #D9D9DC)" : "var(--black, #2B2B30)",
-            color: loading || !password ? "var(--grey-500, #8B8B93)" : "var(--white, #FFFFFF)",
-            fontWeight: 600,
-            fontSize: 15,
-            fontFamily: "inherit",
-            cursor: loading || !password ? "default" : "pointer",
-          }}
-        >
-          {loading ? "Checking…" : "Continue"}
-        </button>
-      </form>
-    </main>
+    <div className="wrap">
+      <div className="phone">
+        <div className="app-topbar">
+          <div className="mark">INDIS 2026</div>
+        </div>
+        <div className="app-body">
+          <div className="screen gate">
+            <div className="gate-icon">
+              <LockIcon />
+            </div>
+            <h1 className="confirm-title">Sign in</h1>
+            <p className="qr-help gate-sub">
+              Enter your username and password. You&rsquo;ll only be asked once per session.
+            </p>
+            <input
+              className="id-input gate-input"
+              type="text"
+              autoFocus
+              autoComplete="username"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+            <input
+              className="id-input gate-input"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+            {error && (
+              <div className="id-error-box" style={{ width: "100%", marginBottom: 14 }}>
+                <p className="id-error-text">{error}</p>
+              </div>
+            )}
+            <button
+              className="primary-btn gate-btn"
+              disabled={!username.trim() || !password.trim() || loading}
+              onClick={submit}
+            >
+              {loading ? "Checking…" : "Sign in"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

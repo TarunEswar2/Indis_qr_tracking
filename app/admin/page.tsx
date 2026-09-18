@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   Attendee,
@@ -10,11 +10,12 @@ import {
   getCategorySettings,
   getLiveDay,
   setCategoryEnabled,
+  setItineraryItem,
   setLiveDay,
   supabase,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
-import AuthGate from "@/components/AuthGate";
+import AuthGate, { readSessionUser } from "@/components/AuthGate";
 import OnboardFlow from "@/components/OnboardFlow";
 
 // ---------------------------------------------------------------------------
@@ -50,8 +51,8 @@ const SHORT_LABEL: Record<Category, string> = {
 
 const DAY_CATEGORIES: Record<Day, Category[]> = {
   1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea"],
-  3: ["lunch", "highTea", "gala"],
+  2: ["lunch", "highTea", "gala"],
+  3: ["lunch", "highTea"],
 };
 
 const ALL_CATEGORIES: Category[] = ["kit", "lunch", "highTea", "gala"];
@@ -68,7 +69,7 @@ function keyFor(day: Day, category: Category): ItineraryKey | null {
     if (day === 2) return "high_tea_day2";
     return "high_tea_day3";
   }
-  if (category === "gala") return day === 3 ? "gala_dinner" : null;
+  if (category === "gala") return day === 2 ? "gala_dinner" : null;
   return null;
 }
 
@@ -117,6 +118,21 @@ function UserPlusIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function WarningIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <path
+        d="M12 3.5L21 19.5H3L12 3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M12 9.5v4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="17" r="0.9" fill="currentColor" />
+    </svg>
+  );
+}
+
 function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
   return (
     <button
@@ -141,9 +157,26 @@ function StatusDot({ done }: { done: boolean }) {
 
 const DAY_ITEMS: Record<Day, ItineraryKey[]> = {
   1: ["kit_received", "lunch_day1", "high_tea_day1"],
-  2: ["lunch_day2", "high_tea_day2"],
-  3: ["lunch_day3", "high_tea_day3", "gala_dinner"],
+  2: ["lunch_day2", "high_tea_day2", "gala_dinner"],
+  3: ["lunch_day3", "high_tea_day3"],
 };
+
+const EMERGENCY_SCANNER_ELEMENT_ID = "emergency-reader";
+
+// Serializes camera start/stop calls the same way OnboardFlow does — its
+// own lock lives in that file, but this one only ever runs while the
+// dashboard's "onboard" view isn't mounted (admin shows one view at a
+// time), so there's no risk of two locks fighting over the same camera.
+let emergencyCameraLock: Promise<void> = Promise.resolve();
+
+function runEmergencyExclusive<T>(task: () => Promise<T>): Promise<T> {
+  const result = emergencyCameraLock.then(task, task);
+  emergencyCameraLock = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 
 function csvEscape(value: string): string {
   if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
@@ -166,7 +199,7 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 function AdminPage() {
-  const [view, setView] = useState<"dashboard" | "onboard">("dashboard");
+  const [view, setView] = useState<"dashboard" | "onboard" | "emergency">("dashboard");
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [settings, setSettings] = useState<CategorySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,6 +210,24 @@ function AdminPage() {
   const [liveDay, setLiveDayState] = useState<Day>(1);
   const [savingLiveDay, setSavingLiveDay] = useState(false);
   const [attendeeTab, setAttendeeTab] = useState<"all" | Day>("all");
+  // Which single cell ("attendeeId:itemKey") is mid-toggle right now, so
+  // that cell's button disables itself while its write is in flight
+  // rather than letting a fast double-click fire two overlapping updates.
+  const [togglingCell, setTogglingCell] = useState<string | null>(null);
+  // Emergency scan: the ONLY place in the app that surfaces an attendee's
+  // phone/email (see lib/supabaseClient.ts — every other lookup path
+  // explicitly excludes those columns). Searches the already-loaded local
+  // `attendees` array (admin's bulk query is select("*"), so it already
+  // has phone/email) rather than a fresh network call.
+  const [emergencyTab, setEmergencyTab] = useState<"qr" | "id">("qr");
+  const [emergencySerial, setEmergencySerial] = useState("");
+  const [emergencyResult, setEmergencyResult] = useState<Attendee | null>(null);
+  const [emergencyError, setEmergencyError] = useState<string | null>(null);
+  const [emergencySearching, setEmergencySearching] = useState(false);
+  const [emergencyScannerActive, setEmergencyScannerActive] = useState(false);
+  const [emergencyCameraError, setEmergencyCameraError] = useState<string | null>(null);
+  const emergencyScannerRef = useRef<any>(null);
+  const emergencyDecodedOnceRef = useRef(false);
 
   async function loadAll() {
     setLoading(true);
@@ -255,6 +306,142 @@ function AdminPage() {
     }
   }
 
+  // Lets an admin correct a scan by hand, right from the attendee table —
+  // click a status dot to flip it (mark done, or undo a done back to not
+  // done) and it's written straight to Supabase. Confirms first (the grid
+  // is dense and easy to mis-click), then is optimistic: the table
+  // updates immediately, and rolls back with an error message if the
+  // write fails.
+  async function handleToggle(attendee: Attendee, key: ItineraryKey, done: boolean, label: string) {
+    const cellId = `${attendee.id}:${key}`;
+    if (togglingCell === cellId) return;
+    const verb = done ? "Mark" : "Un-mark";
+    if (!confirm(`${verb} "${label}" as ${done ? "done" : "not done"} for ${attendee.name}?`)) return;
+    setTogglingCell(cellId);
+    const prevValue = attendee[key];
+    setAttendees((prev) =>
+      prev.map((a) => (a.id === attendee.id ? { ...a, [key]: done ? new Date().toISOString() : null } : a))
+    );
+    try {
+      await setItineraryItem(attendee.id, key, done, readSessionUser()?.username);
+    } catch {
+      setAttendees((prev) => (prev.map((a) => (a.id === attendee.id ? { ...a, [key]: prevValue } : a))));
+      setError("Couldn't update that — try again.");
+    } finally {
+      setTogglingCell(null);
+    }
+  }
+
+  // Shared by both the "Scan QR" and "Type ID" tabs — looks the serial up
+  // in the already-loaded local `attendees` array (admin's bulk query is
+  // select("*"), so phone/email are already there; no extra network call).
+  function lookupEmergencySerial(serial: string) {
+    const q = serial.trim();
+    if (!q) return;
+    setEmergencyError(null);
+    const match = attendees.find((a) => a.serial_code.toLowerCase() === q.toLowerCase());
+    if (match) {
+      setEmergencyResult(match);
+    } else {
+      setEmergencyResult(null);
+      setEmergencyError(`No attendee found with ID "${q}".`);
+    }
+  }
+
+  function handleEmergencyLookup(e: React.FormEvent) {
+    e.preventDefault();
+    const q = emergencySerial.trim();
+    if (!q) return;
+    setEmergencySearching(true);
+    lookupEmergencySerial(q);
+    setEmergencySearching(false);
+  }
+
+  async function startEmergencyScanner() {
+    await runEmergencyExclusive(async () => {
+      setEmergencyCameraError(null);
+      try {
+        const { Html5Qrcode } = await import("html5-qrcode");
+        const el = document.getElementById(EMERGENCY_SCANNER_ELEMENT_ID);
+        if (!el) return;
+        el.innerHTML = "";
+
+        const scanner = new Html5Qrcode(EMERGENCY_SCANNER_ELEMENT_ID);
+        emergencyScannerRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText: string) => {
+            if (emergencyDecodedOnceRef.current) return;
+            emergencyDecodedOnceRef.current = true;
+            handleEmergencyDecoded(decodedText.trim());
+          },
+          () => {}
+        );
+
+        const video = el.querySelector("video") as HTMLVideoElement | null;
+        if (video && video.paused) video.play().catch(() => {});
+
+        setEmergencyScannerActive(true);
+      } catch {
+        setEmergencyScannerActive(false);
+        setEmergencyCameraError("Couldn't access the camera. Use the Type ID tab instead.");
+      }
+    });
+  }
+
+  async function stopEmergencyScanner() {
+    const scanner = emergencyScannerRef.current;
+    emergencyScannerRef.current = null;
+    setEmergencyScannerActive(false);
+    if (!scanner) return;
+    await runEmergencyExclusive(async () => {
+      try {
+        await scanner.stop();
+      } catch {}
+      try {
+        await scanner.clear();
+      } catch {}
+      const el = document.getElementById(EMERGENCY_SCANNER_ELEMENT_ID);
+      if (el) el.innerHTML = "";
+    });
+  }
+
+  function handleEmergencyDecoded(serial: string) {
+    stopEmergencyScanner();
+    lookupEmergencySerial(serial);
+  }
+
+  function switchEmergencyTab(next: "qr" | "id") {
+    if (next === emergencyTab) return;
+    setEmergencyTab(next);
+    if (next === "qr") {
+      setEmergencyError(null);
+    }
+  }
+
+  useEffect(() => {
+    if (view === "emergency" && emergencyTab === "qr" && !emergencyResult) {
+      emergencyDecodedOnceRef.current = false;
+      startEmergencyScanner();
+    } else {
+      stopEmergencyScanner();
+    }
+    return () => {
+      stopEmergencyScanner();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, emergencyTab, emergencyResult]);
+
+  function resetEmergency() {
+    setEmergencySerial("");
+    setEmergencyResult(null);
+    setEmergencyError(null);
+    emergencyDecodedOnceRef.current = false;
+    setEmergencyTab("qr");
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return attendees.filter((a) => {
@@ -294,7 +481,19 @@ function AdminPage() {
     }
     const key = keyFor(attendeeTab, col);
     if (!key) return null;
-    return <StatusDot done={Boolean(attendee[key])} />;
+    const done = Boolean(attendee[key]);
+    const cellId = `${attendee.id}:${key}`;
+    return (
+      <button
+        type="button"
+        className="attendee-status-toggle"
+        onClick={() => handleToggle(attendee, key, !done, CATEGORY_LABEL[col])}
+        disabled={togglingCell === cellId}
+        title={done ? "Mark as not done" : "Mark as done"}
+      >
+        <StatusDot done={done} />
+      </button>
+    );
   }
 
   // Shared by both export formats. day: 1 | 2 | 3 restricts to just that
@@ -309,8 +508,26 @@ function AdminPage() {
       ...items.map((i) => [`${i.label} scanned: ${filtered.filter((a) => Boolean(a[i.key])).length} of ${total}`]),
       [],
     ];
-    const header = ["serial_code", "name", "organization", ...items.map((i) => i.label)];
-    const rows = filtered.map((a) => [a.serial_code, a.name, a.organization ?? "", ...items.map((i) => (a[i.key] ? "Done" : ""))]);
+    const header = [
+      "serial_code",
+      "name",
+      "organization",
+      "designation",
+      "phone",
+      "email",
+      "registered_days",
+      ...items.map((i) => i.label),
+    ];
+    const rows = filtered.map((a) => [
+      a.serial_code,
+      a.name,
+      a.organization ?? "",
+      a.designation,
+      a.phone ?? "",
+      a.email ?? "",
+      Array.isArray(a.registered_days) ? [...a.registered_days].sort().join(",") : "",
+      ...items.map((i) => (a[i.key] ? "Done" : "")),
+    ]);
     return { summary, header, rows, suffix: day ? `day${day}` : "all" };
   }
 
@@ -351,6 +568,129 @@ function AdminPage() {
                 loadAll();
               }}
             />
+          ) : view === "emergency" ? (
+            <div className="screen">
+              <div className="scan-header">
+                <button
+                  className="icon-btn"
+                  onClick={() => {
+                    setView("dashboard");
+                    resetEmergency();
+                  }}
+                  aria-label="Back to dashboard"
+                >
+                  <ChevronLeft width="20" height="20" />
+                </button>
+                <h1 className="scan-title">Emergency scan</h1>
+              </div>
+
+              {emergencyResult ? (
+                <>
+                  <div className="confirm-block">
+                    <div className="check-circle check-circle-warn">
+                      <WarningIcon width="26" height="26" />
+                    </div>
+                    <p className="confirm-title">Contact details</p>
+                    <p className="confirm-time">Use only for a genuine emergency</p>
+                  </div>
+
+                  <div className="delegate-card">
+                    <div className="delegate-block">
+                      <p className="delegate-serial">{emergencyResult.serial_code}</p>
+                      <p className="delegate-tag">{emergencyResult.designation || "Delegate"}</p>
+                      <p className="delegate-name">{emergencyResult.name}</p>
+                      <p className="delegate-role">{emergencyResult.organization || "—"}</p>
+                    </div>
+                    <div className="emergency-contact-rows">
+                      <div className="emergency-contact-row">
+                        <span className="emergency-contact-label">Phone</span>
+                        <span className="emergency-contact-value">{emergencyResult.phone || "Not on file"}</span>
+                      </div>
+                      <div className="emergency-contact-row">
+                        <span className="emergency-contact-label">Email</span>
+                        <span className="emergency-contact-value">{emergencyResult.email || "Not on file"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button className="primary-btn confirm-back-btn" onClick={resetEmergency}>
+                    Look up another
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="tab-row-wrap">
+                    <div className="tabs">
+                      <button
+                        className={`tab ${emergencyTab === "qr" ? "tab-active" : ""}`}
+                        onClick={() => switchEmergencyTab("qr")}
+                        type="button"
+                      >
+                        Scan QR
+                      </button>
+                      <button
+                        className={`tab ${emergencyTab === "id" ? "tab-active" : ""}`}
+                        onClick={() => switchEmergencyTab("id")}
+                        type="button"
+                      >
+                        Type ID
+                      </button>
+                    </div>
+                    <div className="tab-row-baseline" />
+                  </div>
+
+                  {emergencyTab === "qr" ? (
+                    <div className="qr-pane">
+                      <div className="viewfinder">
+                        <div id={EMERGENCY_SCANNER_ELEMENT_ID} className="viewfinder-camera" />
+                        <span className="corner corner-tl" />
+                        <span className="corner corner-tr" />
+                        <span className="corner corner-bl" />
+                        <span className="corner corner-br" />
+                        {emergencyScannerActive && <span className="scan-line" />}
+                      </div>
+                      {emergencyCameraError ? (
+                        <p className="qr-help qr-help-warn">{emergencyCameraError}</p>
+                      ) : emergencyError ? (
+                        <p className="qr-help qr-help-warn">
+                          {emergencyError} Try again, or use the Type ID tab.
+                        </p>
+                      ) : (
+                        <p className="qr-help">Scan the QR on the attendee's badge</p>
+                      )}
+                    </div>
+                  ) : (
+                    <form onSubmit={handleEmergencyLookup} className="onboard-form">
+                      <label className="id-label" htmlFor="emergency-serial">
+                        Serial / ID on the badge
+                      </label>
+                      <input
+                        id="emergency-serial"
+                        className="id-input onboard-field"
+                        autoFocus
+                        value={emergencySerial}
+                        onChange={(e) => setEmergencySerial(e.target.value)}
+                        placeholder="e.g. ICORD25IN519"
+                      />
+
+                      {emergencyError && (
+                        <div className="id-error-box">
+                          <p className="id-error-text">{emergencyError}</p>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="primary-btn onboard-register-btn"
+                        disabled={emergencySearching || !emergencySerial.trim()}
+                      >
+                        {emergencySearching ? "Looking up…" : "Look up"}
+                      </button>
+                    </form>
+                  )}
+                </>
+              )}
+            </div>
           ) : (
           <div className="screen admin-screen">
             {loading ? (
@@ -363,10 +703,20 @@ function AdminPage() {
                   </div>
                 )}
 
-                <button className="onboard-entry-btn" onClick={() => setView("onboard")} type="button">
-                  <UserPlusIcon />
-                  Onboard walk-in
-                </button>
+                <div className="admin-entry-row">
+                  <button className="onboard-entry-btn admin-entry-btn" onClick={() => setView("onboard")} type="button">
+                    <UserPlusIcon />
+                    Onboard walk-in
+                  </button>
+                  <button
+                    className="onboard-entry-btn emergency-entry-btn admin-entry-btn"
+                    onClick={() => setView("emergency")}
+                    type="button"
+                  >
+                    <WarningIcon />
+                    Emergency scan
+                  </button>
+                </div>
 
                 {/* Live day */}
                 <div className="admin-section-head">
@@ -478,8 +828,11 @@ function AdminPage() {
                 <div className="attendee-table-wrap">
                   <div className="attendee-table">
                     <div className="attendee-row attendee-head">
+                      <span className="cell-id">ID</span>
                       <span className="cell-name">Name</span>
                       <span className="cell-desig">Organization</span>
+                      <span className="cell-role">Designation</span>
+                      <span className="cell-days">Days</span>
                       {columns.map((c) => (
                         <span className="cell-cat" key={c}>
                           {SHORT_LABEL[c]}
@@ -488,9 +841,16 @@ function AdminPage() {
                     </div>
                     <div className="attendee-body">
                       {filtered.map((a) => (
-                        <div className="attendee-row" key={a.id} title={a.serial_code}>
+                        <div className="attendee-row" key={a.id}>
+                          <span className="cell-id">{a.serial_code}</span>
                           <span className="cell-name">{a.name}</span>
                           <span className="cell-desig">{a.organization || "—"}</span>
+                          <span className="cell-role">{a.designation}</span>
+                          <span className="cell-days">
+                            {Array.isArray(a.registered_days) && a.registered_days.length > 0
+                              ? [...a.registered_days].sort().join(", ")
+                              : "—"}
+                          </span>
                           {columns.map((c) => (
                             <span className="cell-cat" key={c}>
                               {cellValue(a, c)}
@@ -518,7 +878,7 @@ function AdminPage() {
 
 export default function AdminPageGated() {
   return (
-    <AuthGate role="admin" label="Admin">
+    <AuthGate requiredRole="admin">
       <AdminPage />
     </AuthGate>
   );

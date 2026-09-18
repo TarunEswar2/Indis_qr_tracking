@@ -8,10 +8,11 @@ import {
   getAttendeeBySerial,
   getCategorySettings,
   getLiveDay,
+  isRegisteredForDay,
   markItineraryItem,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
-import AuthGate from "@/components/AuthGate";
+import AuthGate, { readSessionUser } from "@/components/AuthGate";
 
 // ---------------------------------------------------------------------------
 // This screen mirrors prototype_ui/indis-scan-flow.jsx's look AND flow
@@ -43,8 +44,8 @@ const CATEGORY_LABEL: Record<Category, string> = {
 
 const DAY_CATEGORIES: Record<Day, Category[]> = {
   1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea"],
-  3: ["lunch", "highTea", "gala"],
+  2: ["lunch", "highTea", "gala"],
+  3: ["lunch", "highTea"],
 };
 
 // day + category -> real Supabase column, or null if that combo doesn't apply.
@@ -60,7 +61,7 @@ function keyFor(day: Day, category: Category): ItineraryKey | null {
     if (day === 2) return "high_tea_day2";
     return "high_tea_day3";
   }
-  if (category === "gala") return day === 3 ? "gala_dinner" : null;
+  if (category === "gala") return day === 2 ? "gala_dinner" : null;
   return null;
 }
 
@@ -176,7 +177,7 @@ function DelegatePreview({ attendee }: { attendee: Attendee }) {
   return (
     <div className="delegate-block">
       <p className="delegate-serial">{attendee.serial_code}</p>
-      <p className="delegate-tag">Delegate</p>
+      <p className="delegate-tag">{attendee.designation || "Delegate"}</p>
       <p className="delegate-name">{attendee.name}</p>
       <p className="delegate-role">{attendee.organization ?? "—"}</p>
     </div>
@@ -273,6 +274,12 @@ function ScanScreen({
       setNotFound(`${CATEGORY_LABEL[category]} isn't tracked on Day ${day}.`);
       return;
     }
+    if (!isRegisteredForDay(attendee, day)) {
+      setNotFound(`${attendee.name} isn't registered for Day ${day}.`);
+      decodedOnceRef.current = false;
+      startScanner();
+      return;
+    }
     const alreadyDone = Boolean(attendee[itemKey]);
     if (alreadyDone && !confirm(`${attendee.name} is already marked for ${CATEGORY_LABEL[category]}. Mark again anyway?`)) {
       // They said no — this was called from the QR path with the camera
@@ -281,7 +288,7 @@ function ScanScreen({
       startScanner();
       return;
     }
-    await markItineraryItem(attendee.id, itemKey);
+    await markItineraryItem(attendee.id, itemKey, readSessionUser()?.username);
     const refreshed = await getAttendeeBySerial(attendee.serial_code);
     onConfirmed(refreshed);
   }
@@ -670,7 +677,7 @@ function ScanPage() {
 
 export default function ScanPageGated() {
   return (
-    <AuthGate role="staff" label="Volunteer">
+    <AuthGate requiredRole="volunteer">
       <ScanPage />
     </AuthGate>
   );

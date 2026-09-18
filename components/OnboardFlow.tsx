@@ -61,6 +61,12 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
   const [serialCode, setSerialCode] = useState("");
   const [name, setName] = useState("");
   const [organization, setOrganization] = useState("");
+  // Which days this walk-in actually registered for — defaults to all
+  // three (the common case), narrowed if they only signed up for part
+  // of the event. Mirrors attendees.registered_days (see
+  // supabase/schema.sql) and is what the scan flow later checks before
+  // letting a volunteer mark them for a day they didn't register for.
+  const [registeredDays, setRegisteredDays] = useState<number[]>([1, 2, 3]);
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanWarning, setScanWarning] = useState<string | null>(null);
@@ -185,13 +191,24 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
     }
   }
 
+  function toggleDay(day: number) {
+    setRegisteredDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting || !serialCode.trim() || !name.trim()) return;
     setSubmitting(true);
     setError(null);
     try {
-      const attendee = await registerOnspotAttendee(serialCode.trim(), name.trim(), organization.trim());
+      const attendee = await registerOnspotAttendee(
+        serialCode.trim(),
+        name.trim(),
+        organization.trim(),
+        registeredDays.length > 0 ? registeredDays : [1, 2, 3]
+      );
       setRegistered(attendee);
       refreshCount();
     } catch (e) {
@@ -213,6 +230,7 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
     setSerialCode("");
     setName("");
     setOrganization("");
+    setRegisteredDays([1, 2, 3]);
     setError(null);
     setScanWarning(null);
     decodedOnceRef.current = false;
@@ -336,13 +354,31 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
             placeholder="College / company"
           />
 
+          <label className="id-label">Day validity</label>
+          <div className="onboard-day-checks">
+            {[1, 2, 3].map((day) => (
+              <label key={day} className="onboard-day-check">
+                <input
+                  type="checkbox"
+                  checked={registeredDays.includes(day)}
+                  onChange={() => toggleDay(day)}
+                />
+                Day {day}
+              </label>
+            ))}
+          </div>
+
           {error && (
             <div className="id-error-box">
               <p className="id-error-text">{error}</p>
             </div>
           )}
 
-          <button type="submit" className="primary-btn onboard-register-btn" disabled={submitting || !serialCode.trim() || !name.trim()}>
+          <button
+            type="submit"
+            className="primary-btn onboard-register-btn"
+            disabled={submitting || !serialCode.trim() || !name.trim() || registeredDays.length === 0}
+          >
             {submitting ? "Registering…" : "Register"}
           </button>
         </form>

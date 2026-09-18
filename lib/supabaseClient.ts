@@ -28,20 +28,56 @@ export type Attendee = {
   name: string;
   organization: string | null;
   is_onspot: boolean;
+  designation: string; // e.g. "Delegate", "Speaker" — defaults to "TEST" until set (see supabase/schema.sql)
+  phone: string | null;
+  email: string | null;
+  registered_days: number[]; // which of [1, 2, 3] this person actually registered for
 } & Record<ItineraryKey, string | null>; // null = not done, timestamp = done
 
 /**
+ * Whether an attendee actually registered for a given day — some people
+ * only sign up for 1 or 2 of the 3 days. Used to stop a volunteer from
+ * checking someone in for a day they never registered for.
+ */
+export function isRegisteredForDay(attendee: Attendee, day: 1 | 2 | 3): boolean {
+  return Array.isArray(attendee.registered_days) && attendee.registered_days.includes(day);
+}
+
+// Columns the volunteer/onboarding scan flow is allowed to see for a
+// single attendee lookup — everything EXCEPT phone and email. Those two
+// are admin-only contact details; leaving them out of this select means
+// they never reach a volunteer's browser at all (not just hidden in the
+// UI — genuinely absent from the network response), so there's nothing
+// to find even by opening dev tools. Deliberately built as "everything
+// except phone/email" rather than a hardcoded list, so a new column
+// added later is included here automatically unless explicitly excluded.
+const ATTENDEE_COLUMNS_NO_CONTACT = [
+  "id",
+  "serial_code",
+  "name",
+  "organization",
+  "is_onspot",
+  "designation",
+  "registered_days",
+  ...ITINERARY_ITEMS.map((i) => i.key),
+].join(", ");
+
+/**
  * Look up an attendee by the serial code embedded in their badge QR.
+ * Used by the volunteer scan flow and onboarding — never returns phone
+ * or email (see ATTENDEE_COLUMNS_NO_CONTACT above). The admin dashboard
+ * gets the full row, including contact info, through its own separate
+ * bulk query in app/admin/page.tsx.
  */
 export async function getAttendeeBySerial(serialCode: string) {
   const { data, error } = await supabase
     .from("attendees")
-    .select("*")
+    .select(ATTENDEE_COLUMNS_NO_CONTACT)
     .eq("serial_code", serialCode)
     .single();
 
   if (error) throw error;
-  return data as Attendee;
+  return data as unknown as Attendee;
 }
 
 /**
@@ -73,6 +109,41 @@ export async function markItineraryItem(
   if (logError) throw logError;
 }
 
+/**
+ * Set (or clear) one itinerary item directly — used by the admin
+ * dashboard's attendee table, where an admin can correct a scan by hand
+ * (mark something done that a volunteer missed, or undo an accidental
+ * scan) without going through the QR flow. done=true stamps "now" and
+ * logs it to scan_log same as a real scan; done=false clears the column
+ * back to null and does NOT write a scan_log row (there's nothing to log
+ * — it's an undo, not an event).
+ */
+export async function setItineraryItem(
+  attendeeId: string,
+  item: ItineraryKey,
+  done: boolean,
+  scannedBy?: string
+) {
+  const now = done ? new Date().toISOString() : null;
+
+  const { error: updateError } = await supabase
+    .from("attendees")
+    .update({ [item]: now })
+    .eq("id", attendeeId);
+
+  if (updateError) throw updateError;
+
+  if (done) {
+    const { error: logError } = await supabase.from("scan_log").insert({
+      attendee_id: attendeeId,
+      item,
+      scanned_by: scannedBy ?? null,
+      scanned_at: now,
+    });
+    if (logError) throw logError;
+  }
+}
+
 // ---------------------------------------------------------------------
 // On-the-spot registration. For walk-ins who show up without a
 // pre-printed pre-registered badge: staff at the onboarding desk hand
@@ -88,7 +159,8 @@ export class DuplicateSerialError extends Error {}
 export async function registerOnspotAttendee(
   serialCode: string,
   name: string,
-  organization: string
+  organization: string,
+  registeredDays: number[] = [1, 2, 3]
 ) {
   const { data, error } = await supabase
     .from("attendees")
@@ -97,6 +169,7 @@ export async function registerOnspotAttendee(
       name,
       organization: organization || null,
       is_onspot: true,
+      registered_days: registeredDays,
     })
     .select()
     .single();
@@ -164,4 +237,37 @@ export async function setLiveDay(day: Day) {
     .from("app_settings")
     .upsert({ key: "live_day", value: String(day) });
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// Per-person login. Every volunteer/onboarding person and every admin
+// has their own row in app_users (see supabase/schema.sql) with a role
+// that decides which pages they can reach. There's no direct table
+// access for the anon key here — verify_login() is a SECURITY DEFINER
+// Postgres function that checks the password server-side (via pgcrypto)
+// and only ever returns username/role/display_name, never the hash, and
+// only on an exact match. Called from app/api/auth/route.ts.
+// ---------------------------------------------------------------------
+
+export type UserRole = "admin" | "volunteer";
+
+export type AppUser = {
+  username: string;
+  role: UserRole;
+  display_name: string | null;
+};
+
+export async function verifyLogin(username: string, password: string): Promise<AppUser | null> {
+  const { data, error } = await supabase.rpc("verify_login", {
+    p_username: username,
+    p_password: password,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    username: row.username,
+    role: row.role as UserRole,
+    display_name: row.display_name ?? null,
+  };
 }
