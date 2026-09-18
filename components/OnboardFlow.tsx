@@ -61,6 +61,14 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
   const [serialCode, setSerialCode] = useState("");
   const [name, setName] = useState("");
   const [organization, setOrganization] = useState("");
+  // Contact details, captured here at the desk because this is the one
+  // moment we actually have the walk-in in front of us. Admin-only from
+  // then on: the volunteer scan flow never receives these columns at all
+  // (see ATTENDEE_COLUMNS_NO_CONTACT in lib/supabaseClient.ts), and admin
+  // reads them back through the Emergency scan screen. Both optional —
+  // plenty of walk-ins won't want to hand them over.
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   // Which days this walk-in actually registered for — defaults to all
   // three (the common case), narrowed if they only signed up for part
   // of the event. Mirrors attendees.registered_days (see
@@ -203,12 +211,14 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
     setSubmitting(true);
     setError(null);
     try {
-      const attendee = await registerOnspotAttendee(
-        serialCode.trim(),
-        name.trim(),
-        organization.trim(),
-        registeredDays.length > 0 ? registeredDays : [1, 2, 3]
-      );
+      const attendee = await registerOnspotAttendee({
+        serialCode: serialCode.trim(),
+        name: name.trim(),
+        organization: organization.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        registeredDays: registeredDays.length > 0 ? registeredDays : [1, 2, 3],
+      });
       setRegistered(attendee);
       refreshCount();
     } catch (e) {
@@ -230,6 +240,8 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
     setSerialCode("");
     setName("");
     setOrganization("");
+    setPhone("");
+    setEmail("");
     setRegisteredDays([1, 2, 3]);
     setError(null);
     setScanWarning(null);
@@ -352,6 +364,32 @@ export default function OnboardFlow({ onBack }: { onBack: () => void }) {
             value={organization}
             onChange={(e) => setOrganization(e.target.value)}
             placeholder="College / company"
+          />
+
+          <label className="id-label" htmlFor="onboard-phone">
+            Phone (optional)
+          </label>
+          <input
+            id="onboard-phone"
+            className="id-input onboard-field"
+            type="tel"
+            inputMode="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="10-digit mobile number"
+          />
+
+          <label className="id-label" htmlFor="onboard-email">
+            Email (optional)
+          </label>
+          <input
+            id="onboard-email"
+            className="id-input onboard-field"
+            type="email"
+            inputMode="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="name@example.com"
           />
 
           <label className="id-label">Day validity</label>

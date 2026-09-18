@@ -156,18 +156,29 @@ export async function setItineraryItem(
 
 export class DuplicateSerialError extends Error {}
 
-export async function registerOnspotAttendee(
-  serialCode: string,
-  name: string,
-  organization: string,
-  registeredDays: number[] = [1, 2, 3]
-) {
+export async function registerOnspotAttendee({
+  serialCode,
+  name,
+  organization,
+  phone,
+  email,
+  registeredDays = [1, 2, 3],
+}: {
+  serialCode: string;
+  name: string;
+  organization: string;
+  phone?: string;
+  email?: string;
+  registeredDays?: number[];
+}) {
   const { data, error } = await supabase
     .from("attendees")
     .insert({
       serial_code: serialCode,
       name,
       organization: organization || null,
+      phone: phone?.trim() || null,
+      email: email?.trim() || null,
       is_onspot: true,
       registered_days: registeredDays,
     })
