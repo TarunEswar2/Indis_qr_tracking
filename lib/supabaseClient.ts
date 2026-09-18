@@ -184,6 +184,19 @@ export async function registerOnspotAttendee(
   return data as Attendee;
 }
 
+/**
+ * Update which days an attendee is registered for — used by the admin
+ * dashboard's attendee table to correct a walk-in's day validity after
+ * the fact (e.g. they paid to extend to another day).
+ */
+export async function setAttendeeRegisteredDays(attendeeId: string, days: number[]) {
+  const { error } = await supabase
+    .from("attendees")
+    .update({ registered_days: days })
+    .eq("id", attendeeId);
+  if (error) throw error;
+}
+
 // ---------------------------------------------------------------------
 // Category on/off switches (for the admin dashboard). Backed by the
 // `category_settings` table — one row per itinerary key. A key with no

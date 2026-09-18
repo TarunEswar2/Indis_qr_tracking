@@ -9,6 +9,8 @@ import {
   ItineraryKey,
   getCategorySettings,
   getLiveDay,
+  isRegisteredForDay,
+  setAttendeeRegisteredDays,
   setCategoryEnabled,
   setItineraryItem,
   setLiveDay,
@@ -214,6 +216,11 @@ function AdminPage() {
   // that cell's button disables itself while its write is in flight
   // rather than letting a fast double-click fire two overlapping updates.
   const [togglingCell, setTogglingCell] = useState<string | null>(null);
+  // Which attendee's "Days" cell is open for editing right now — click the
+  // cell to reveal Day 1/2/3 checkboxes for that row, click elsewhere (or
+  // save) to close it.
+  const [editingDaysId, setEditingDaysId] = useState<string | null>(null);
+  const [savingDaysId, setSavingDaysId] = useState<string | null>(null);
   // Emergency scan: the ONLY place in the app that surfaces an attendee's
   // phone/email (see lib/supabaseClient.ts — every other lookup path
   // explicitly excludes those columns). Searches the already-loaded local
@@ -312,9 +319,18 @@ function AdminPage() {
   // is dense and easy to mis-click), then is optimistic: the table
   // updates immediately, and rolls back with an error message if the
   // write fails.
-  async function handleToggle(attendee: Attendee, key: ItineraryKey, done: boolean, label: string) {
+  async function handleToggle(attendee: Attendee, key: ItineraryKey, done: boolean, label: string, day?: Day) {
     const cellId = `${attendee.id}:${key}`;
     if (togglingCell === cellId) return;
+    // Marking something "done" for a day the attendee never registered
+    // for is almost always a mis-scan or the wrong table cell — refuse
+    // and tell the admin, rather than silently letting it through the way
+    // the QR scan flow refuses it for volunteers (see isRegisteredForDay
+    // in lib/supabaseClient.ts).
+    if (done && day && !isRegisteredForDay(attendee, day)) {
+      alert(`${attendee.name} isn't registered for Day ${day} — can't mark "${label}" as done.`);
+      return;
+    }
     const verb = done ? "Mark" : "Un-mark";
     if (!confirm(`${verb} "${label}" as ${done ? "done" : "not done"} for ${attendee.name}?`)) return;
     setTogglingCell(cellId);
@@ -329,6 +345,28 @@ function AdminPage() {
       setError("Couldn't update that — try again.");
     } finally {
       setTogglingCell(null);
+    }
+  }
+
+  // Flips one day on/off in an attendee's registered_days, straight from
+  // the table's "Days" cell — optimistic, rolls back on failure.
+  async function toggleAttendeeDay(attendee: Attendee, day: Day) {
+    if (savingDaysId === attendee.id) return;
+    const current = Array.isArray(attendee.registered_days) ? attendee.registered_days : [];
+    const next = current.includes(day)
+      ? current.filter((d) => d !== day)
+      : [...current, day].sort();
+    setSavingDaysId(attendee.id);
+    setAttendees((prev) => prev.map((a) => (a.id === attendee.id ? { ...a, registered_days: next } : a)));
+    try {
+      await setAttendeeRegisteredDays(attendee.id, next);
+    } catch {
+      setAttendees((prev) =>
+        prev.map((a) => (a.id === attendee.id ? { ...a, registered_days: current } : a))
+      );
+      setError("Couldn't update day validity — try again.");
+    } finally {
+      setSavingDaysId(null);
     }
   }
 
@@ -487,7 +525,7 @@ function AdminPage() {
       <button
         type="button"
         className="attendee-status-toggle"
-        onClick={() => handleToggle(attendee, key, !done, CATEGORY_LABEL[col])}
+        onClick={() => handleToggle(attendee, key, !done, CATEGORY_LABEL[col], attendeeTab as Day)}
         disabled={togglingCell === cellId}
         title={done ? "Mark as not done" : "Mark as done"}
       >
@@ -833,8 +871,12 @@ function AdminPage() {
                       <span className="cell-desig">Organization</span>
                       <span className="cell-role">Designation</span>
                       <span className="cell-days">Days</span>
-                      {columns.map((c) => (
-                        <span className="cell-cat" key={c}>
+                      {columns.map((c, i) => (
+                        <span
+                          className="cell-cat"
+                          key={c}
+                          style={i === columns.length - 1 ? { flex: "1 1 auto" } : undefined}
+                        >
                           {SHORT_LABEL[c]}
                         </span>
                       ))}
@@ -846,13 +888,47 @@ function AdminPage() {
                           <span className="cell-name">{a.name}</span>
                           <span className="cell-desig">{a.organization || "—"}</span>
                           <span className="cell-role">{a.designation}</span>
-                          <span className="cell-days">
-                            {Array.isArray(a.registered_days) && a.registered_days.length > 0
-                              ? [...a.registered_days].sort().join(", ")
-                              : "—"}
+                          <span className="cell-days cell-days-editable">
+                            {editingDaysId === a.id ? (
+                              <div className="days-edit-pop">
+                                {([1, 2, 3] as Day[]).map((day) => (
+                                  <label key={day} className="days-edit-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={Array.isArray(a.registered_days) && a.registered_days.includes(day)}
+                                      onChange={() => toggleAttendeeDay(a, day)}
+                                      disabled={savingDaysId === a.id}
+                                    />
+                                    Day {day}
+                                  </label>
+                                ))}
+                                <button
+                                  type="button"
+                                  className="days-edit-done"
+                                  onClick={() => setEditingDaysId(null)}
+                                >
+                                  Done
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="cell-days-btn"
+                                onClick={() => setEditingDaysId(a.id)}
+                                title="Edit day validity"
+                              >
+                                {Array.isArray(a.registered_days) && a.registered_days.length > 0
+                                  ? [...a.registered_days].sort().join(", ")
+                                  : "—"}
+                              </button>
+                            )}
                           </span>
-                          {columns.map((c) => (
-                            <span className="cell-cat" key={c}>
+                          {columns.map((c, i) => (
+                            <span
+                              className="cell-cat"
+                              key={c}
+                              style={i === columns.length - 1 ? { flex: "1 1 auto" } : undefined}
+                            >
                               {cellValue(a, c)}
                             </span>
                           ))}
