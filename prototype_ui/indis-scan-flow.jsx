@@ -184,6 +184,16 @@ function AlertIcon(props) {
   );
 }
 
+function UserCircleIcon(props) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" {...props}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="10" r="3" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M6.3 18.5c1.2-2.2 3.3-3.4 5.7-3.4s4.5 1.2 5.7 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function LockIcon(props) {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" {...props}>
@@ -506,15 +516,35 @@ function StatusDot({ status }) {
   return <span className="attendee-status-no">—</span>;
 }
 
+function DayCheckbox({ day, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      className={`day-checkbox ${checked ? "day-checkbox-checked" : ""}`}
+      onClick={onChange}
+      aria-pressed={checked}
+    >
+      <span className="day-checkbox-box">{checked && <Check width="11" height="11" />}</span>
+      Day {day}
+    </button>
+  );
+}
+
 function OnboardFlow({ onBack, onboardCount, onRegister }) {
   const [tab, setTab] = useState("qr");
   const [scanning, setScanning] = useState(false);
   const [serial, setSerial] = useState("");
   const [fullName, setFullName] = useState("");
   const [org, setOrg] = useState("");
+  const [validDays, setValidDays] = useState({ 1: true, 2: true, 3: true });
   const [done, setDone] = useState(false);
 
-  const canRegister = serial.trim() && fullName.trim();
+  const selectedDays = [1, 2, 3].filter((d) => validDays[d]);
+  const canRegister = serial.trim() && fullName.trim() && selectedDays.length > 0;
+
+  const toggleDay = (d) => {
+    setValidDays((prev) => ({ ...prev, [d]: !prev[d] }));
+  };
 
   const runScan = () => {
     if (scanning) return;
@@ -536,6 +566,7 @@ function OnboardFlow({ onBack, onboardCount, onRegister }) {
     setSerial("");
     setFullName("");
     setOrg("");
+    setValidDays({ 1: true, 2: true, 3: true });
     setTab("qr");
     setDone(false);
   };
@@ -555,6 +586,9 @@ function OnboardFlow({ onBack, onboardCount, onRegister }) {
           <p className="confirm-context">Walk-in registered</p>
           <p className="confirm-title">{fullName}</p>
           <p className="confirm-time">{serial} is now linked to their record</p>
+          <p className="confirm-time">
+            Valid for {selectedDays.map((d) => `Day ${d}`).join(", ")}
+          </p>
         </div>
         <button className="primary-btn confirm-back-btn" onClick={registerAnother}>
           Register another
@@ -625,6 +659,13 @@ function OnboardFlow({ onBack, onboardCount, onRegister }) {
             value={org}
             onChange={(e) => setOrg(e.target.value)}
           />
+
+          <label className="id-label">Day validity</label>
+          <div className="day-checkbox-row">
+            {[1, 2, 3].map((d) => (
+              <DayCheckbox key={d} day={d} checked={validDays[d]} onChange={() => toggleDay(d)} />
+            ))}
+          </div>
 
           <button className="primary-btn onboard-register-btn" onClick={handleRegister} disabled={!canRegister}>
             Register
@@ -1002,6 +1043,7 @@ const TODAY = 2;
 export default function App() {
   const [mainTab, setMainTab] = useState("volunteer");
   const [unlocked, setUnlocked] = useState({ volunteer: false, admin: false });
+  const [profileOpen, setProfileOpen] = useState(false);
   const [day, setDay] = useState(TODAY);
   const [screen, setScreen] = useState("home");
   const [category, setCategory] = useState(null);
@@ -1019,6 +1061,11 @@ export default function App() {
   const [attendeeTab, setAttendeeTab] = useState("all");
 
   const unlockTab = (t) => setUnlocked((prev) => ({ ...prev, [t]: true }));
+
+  const signOut = () => {
+    setUnlocked((prev) => ({ ...prev, [mainTab]: false }));
+    setProfileOpen(false);
+  };
 
   const toggleCategory = (d, cat) => {
     setCategoryEnabled((prev) => ({
@@ -1146,6 +1193,69 @@ export default function App() {
           position: relative;
           display: flex;
           flex-direction: column;
+        }
+
+        .profile-overlay {
+          position: absolute;
+          inset: 0;
+          z-index: 15;
+          background: transparent;
+        }
+        .profile-btn-wrap {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          z-index: 20;
+        }
+        .profile-btn {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          border: 1.5px solid var(--black);
+          background: var(--white);
+          color: var(--black);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+        .profile-popover {
+          position: absolute;
+          top: 40px;
+          right: 0;
+          background: var(--white);
+          border: 1.5px solid var(--black);
+          border-radius: 14px;
+          padding: 16px;
+          min-width: 170px;
+          box-shadow: 0 10px 24px rgba(10,10,12,0.12);
+        }
+        .profile-username {
+          font-family: var(--font-heading);
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--black);
+          margin: 0;
+        }
+        .profile-role {
+          font-size: 12px;
+          color: var(--grey-500);
+          margin: 2px 0 14px;
+        }
+        .profile-signout-btn {
+          width: 100%;
+          border: 1.5px solid var(--error);
+          background: var(--error-wash);
+          color: var(--error);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 9px 0;
+          border-radius: 10px;
+          cursor: pointer;
+        }
+        .profile-signout-btn:active {
+          opacity: 0.8;
         }
 
         .app-topbar {
@@ -1507,6 +1617,39 @@ export default function App() {
         }
         .onboard-register-btn {
           margin-top: 4px;
+        }
+        .day-checkbox-row {
+          display: flex;
+          gap: 22px;
+          margin-bottom: 20px;
+        }
+        .day-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border: none;
+          background: none;
+          padding: 0;
+          color: var(--black);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .day-checkbox-box {
+          width: 18px;
+          height: 18px;
+          border-radius: 4px;
+          border: 1.5px solid var(--black);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .day-checkbox-checked .day-checkbox-box {
+          background: var(--accent);
+          border-color: var(--accent);
+          color: var(--white);
         }
 
         .emergency-warning {
@@ -2008,6 +2151,22 @@ export default function App() {
       `}</style>
 
       <div className="phone">
+        {profileOpen && <div className="profile-overlay" onClick={() => setProfileOpen(false)} />}
+        <div className="profile-btn-wrap">
+          <button className="profile-btn" onClick={() => setProfileOpen((o) => !o)} aria-label="Profile">
+            <UserCircleIcon />
+          </button>
+          {profileOpen && (
+            <div className="profile-popover">
+              <p className="profile-username">Aditya Rao</p>
+              <p className="profile-role">{mainTab === "admin" ? "Admin" : "Volunteer"}</p>
+              <button className="profile-signout-btn" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
+
         {(!unlocked[mainTab] || mainTab === "admin" || screen === "home") && (
           <div className="app-topbar">
             <div className="mark">INDIS 2026</div>
