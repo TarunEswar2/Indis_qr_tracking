@@ -103,6 +103,8 @@ const DELEGATE = {
   name: "Jane Doe",
   role: "HOD, Department of Design",
   college: "IIT Guwahati",
+  phone: "+91 98765 43210",
+  email: "jane.doe@iitg.ac.in",
 };
 
 function BackArrow(props) {
@@ -168,6 +170,16 @@ function UserPlusIcon(props) {
       <circle cx="9" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.7" />
       <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
       <path d="M18 8v6M15 11h6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AlertIcon(props) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M12 3.5L2.5 20h19L12 3.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <path d="M12 10v4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <circle cx="12" cy="17.3" r="1" fill="currentColor" />
     </svg>
   );
 }
@@ -623,6 +635,162 @@ function OnboardFlow({ onBack, onboardCount, onRegister }) {
   );
 }
 
+function EmergencyScanFlow({ onBack }) {
+  const [tab, setTab] = useState("qr");
+  const [scanning, setScanning] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [idValue, setIdValue] = useState("");
+  const [notFound, setNotFound] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+
+  const runScan = () => {
+    if (scanning) return;
+    setScanning(true);
+    setTimeout(() => {
+      setScanning(false);
+      setRevealed(true);
+    }, 900);
+  };
+
+  const runCheck = () => {
+    if (checking || !idValue.trim()) return;
+    setChecking(true);
+    setTimeout(() => {
+      setChecking(false);
+      const found = idValue.trim().toLowerCase() !== "0000";
+      if (found) {
+        setRevealed(true);
+      } else {
+        setNotFound(true);
+      }
+    }, 700);
+  };
+
+  const handleIdChange = (e) => {
+    setIdValue(e.target.value);
+    if (notFound) setNotFound(false);
+  };
+
+  const lookupAnother = () => {
+    setRevealed(false);
+    setNotFound(false);
+    setIdValue("");
+    setTab("qr");
+  };
+
+  if (revealed) {
+    return (
+      <div className="screen">
+        <div className="scan-header">
+          <button className="icon-btn" onClick={onBack} aria-label="Back">
+            <BackArrow />
+          </button>
+        </div>
+
+        <div className="confirm-block">
+          <div className="alert-circle">
+            <AlertIcon width="26" height="26" />
+          </div>
+          <p className="confirm-context">Emergency lookup</p>
+          <p className="confirm-title">Contact details</p>
+        </div>
+
+        <div className="delegate-card emergency-card">
+          <p className="delegate-serial">{DELEGATE.serial}</p>
+          <p className="delegate-tag">Delegate</p>
+          <p className="delegate-name">{DELEGATE.name}</p>
+          <p className="delegate-role">{DELEGATE.role}</p>
+          <p className="delegate-role">{DELEGATE.college}</p>
+          <div className="emergency-contact-row">
+            <span className="emergency-contact-label">Phone</span>
+            <span className="emergency-contact-value">{DELEGATE.phone}</span>
+          </div>
+          <div className="emergency-contact-row">
+            <span className="emergency-contact-label">Email</span>
+            <span className="emergency-contact-value">{DELEGATE.email}</span>
+          </div>
+        </div>
+
+        <button className="primary-btn confirm-back-btn emergency-primary-btn" onClick={lookupAnother}>
+          Look up another
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen">
+      <div className="scan-header">
+        <button className="icon-btn" onClick={onBack} aria-label="Back">
+          <BackArrow />
+        </button>
+        <h1 className="scan-title">Emergency scan</h1>
+      </div>
+
+      <p className="emergency-warning">
+        Only use this to identify an attendee in an emergency. It reveals their phone number and email.
+      </p>
+
+      <div className="tab-row-wrap">
+        <div className="tabs">
+          <button className={`tab ${tab === "qr" ? "tab-active" : ""}`} onClick={() => setTab("qr")}>
+            QR
+          </button>
+          <button className={`tab ${tab === "id" ? "tab-active" : ""}`} onClick={() => setTab("id")}>
+            ID
+          </button>
+        </div>
+        <div className="tab-row-baseline" />
+      </div>
+
+      {tab === "qr" ? (
+        <div className="qr-pane">
+          <div className="viewfinder">
+            <span className="corner corner-tl" />
+            <span className="corner corner-tr" />
+            <span className="corner corner-bl" />
+            <span className="corner corner-br" />
+            {scanning && <span className="scan-line" />}
+          </div>
+          <p className="qr-help">Align the QR on the delegate's ID within the frame</p>
+          <button className="demo-btn" onClick={runScan} disabled={scanning}>
+            {scanning ? "Scanning…" : "Simulate scan (demo)"}
+          </button>
+        </div>
+      ) : (
+        <div className="id-pane">
+          <label className="id-label" htmlFor="emergency-id">
+            Delegate ID
+          </label>
+          <div className="id-action-group">
+            <div className="id-row">
+              <div className="id-input-wrap">
+                <input
+                  id="emergency-id"
+                  className="id-input"
+                  placeholder="Enter unique ID"
+                  value={idValue}
+                  onChange={handleIdChange}
+                />
+              </div>
+              <button className="check-btn" onClick={runCheck} disabled={!idValue.trim() || checking}>
+                {checking ? "Checking…" : "Check"}
+              </button>
+            </div>
+
+            {notFound && (
+              <div className="id-error-box">
+                <XMark width="16" height="16" className="id-error-icon" />
+                <p className="id-error-text">ID not found, Check again or try scanning QR again.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminScreen({
   adminDay,
   onChangeAdminDay,
@@ -691,12 +859,39 @@ function AdminScreen({
     );
   }
 
+  if (view === "emergency") {
+    return <EmergencyScanFlow onBack={() => setView("dashboard")} />;
+  }
+
+  if (view === "maintenance") {
+    return (
+      <div className="screen">
+        <div className="scan-header">
+          <button className="icon-btn" onClick={() => setView("dashboard")} aria-label="Back">
+            <BackArrow />
+          </button>
+          <h1 className="scan-title">Maintenance check</h1>
+        </div>
+        <p className="qr-help admin-help">
+          Coming soon — tell me what this should check (individual QRs, scanner uptime, something
+          else) and this gets built out.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="screen admin-screen">
-      <button className="onboard-entry-btn" onClick={() => setView("onboard")}>
-        <UserPlusIcon />
-        Onboard walk-in
-      </button>
+      <div className="admin-entry-row">
+        <button className="onboard-entry-btn" onClick={() => setView("onboard")}>
+          <UserPlusIcon />
+          Onboard
+        </button>
+        <button className="emergency-entry-btn" onClick={() => setView("emergency")}>
+          <AlertIcon />
+          Emergency scan
+        </button>
+      </div>
 
       <div className="admin-section-head">
         <h2 className="admin-h2">Categories</h2>
@@ -794,6 +989,10 @@ function AdminScreen({
           </div>
         </div>
       </div>
+
+      <button className="maintenance-link" onClick={() => setView("maintenance")}>
+        Check maintenance
+      </button>
     </div>
   );
 }
@@ -1045,6 +1244,11 @@ export default function App() {
         .admin-screen {
           padding-bottom: 24px;
         }
+        .admin-help {
+          text-align: left;
+          margin: 0;
+          max-width: none;
+        }
         .admin-section-head {
           display: flex;
           align-items: center;
@@ -1227,25 +1431,65 @@ export default function App() {
         .attendee-status-no { color: var(--grey-300); }
         .attendee-fraction { color: var(--grey-700); font-weight: 600; }
 
+        .maintenance-link {
+          display: block;
+          background: none;
+          border: none;
+          padding: 0;
+          margin: 20px auto 0;
+          font-family: inherit;
+          font-size: 12px;
+          color: var(--grey-500);
+          text-decoration: underline;
+          cursor: pointer;
+        }
+
+        .admin-entry-row {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 24px;
+        }
         .onboard-entry-btn {
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 8px;
-          width: 100%;
-          border: 1.5px dashed var(--black);
-          background: transparent;
+          flex: 1;
+          border: 1.5px solid var(--black);
+          background: var(--white);
           color: var(--black);
           font-family: inherit;
           font-size: 13px;
-          font-weight: 600;
-          padding: 12px 0;
+          font-weight: 700;
+          padding: 12px 8px;
           border-radius: 12px;
           cursor: pointer;
-          margin-bottom: 24px;
+          transition: transform 0.1s ease, opacity 0.1s ease;
         }
         .onboard-entry-btn:active {
+          transform: scale(0.98);
           background: var(--black-wash);
+        }
+        .emergency-entry-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          flex: 1;
+          border: 1.5px solid var(--error);
+          background: var(--error);
+          color: var(--white);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 12px 8px;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: transform 0.1s ease, opacity 0.1s ease;
+        }
+        .emergency-entry-btn:active {
+          transform: scale(0.98);
+          opacity: 0.85;
         }
 
         .onboard-count {
@@ -1263,6 +1507,53 @@ export default function App() {
         }
         .onboard-register-btn {
           margin-top: 4px;
+        }
+
+        .emergency-warning {
+          font-size: 13px;
+          color: var(--error);
+          background: var(--error-wash);
+          border: 1.5px solid var(--error);
+          border-radius: 12px;
+          padding: 10px 14px;
+          line-height: 1.4;
+          margin: 0 0 20px;
+        }
+        .alert-circle {
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          background: var(--error-wash);
+          border: 1.5px solid var(--black);
+          color: var(--error);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 14px;
+        }
+        .emergency-card {
+          margin-bottom: 24px;
+        }
+        .emergency-contact-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-top: 12px;
+          margin-top: 12px;
+          border-top: 1px solid var(--grey-300);
+        }
+        .emergency-contact-label {
+          font-size: 12px;
+          color: var(--grey-500);
+        }
+        .emergency-contact-value {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--black);
+        }
+        .emergency-primary-btn {
+          background: var(--error);
+          border-color: var(--error);
         }
 
         /* HOME */
