@@ -229,6 +229,12 @@ function AdminPage() {
   const [emergencyTab, setEmergencyTab] = useState<"qr" | "id">("qr");
   const [emergencySerial, setEmergencySerial] = useState("");
   const [emergencyResult, setEmergencyResult] = useState<Attendee | null>(null);
+  // Set instead of emergencyResult when the typed/scanned value is short
+  // enough to be "just the last few digits" and more than one attendee's
+  // serial ends with it — rare (2 pairs across ~385 codes as of the last
+  // check) but real, so the admin picks the right one instead of us
+  // guessing.
+  const [emergencyMatches, setEmergencyMatches] = useState<Attendee[] | null>(null);
   const [emergencyError, setEmergencyError] = useState<string | null>(null);
   const [emergencySearching, setEmergencySearching] = useState(false);
   const [emergencyScannerActive, setEmergencyScannerActive] = useState(false);
@@ -373,17 +379,43 @@ function AdminPage() {
   // Shared by both the "Scan QR" and "Type ID" tabs — looks the serial up
   // in the already-loaded local `attendees` array (admin's bulk query is
   // select("*"), so phone/email are already there; no extra network call).
+  // Accepts either the full serial or just its last few characters (badges
+  // print the last 4 digits, which are unique for all but a couple of
+  // pairs in this dataset) — falls back to a suffix match when there's no
+  // exact hit, and surfaces every match if more than one shares that
+  // suffix rather than guessing.
   function lookupEmergencySerial(serial: string) {
     const q = serial.trim();
     if (!q) return;
     setEmergencyError(null);
-    const match = attendees.find((a) => a.serial_code.toLowerCase() === q.toLowerCase());
-    if (match) {
-      setEmergencyResult(match);
-    } else {
-      setEmergencyResult(null);
-      setEmergencyError(`No attendee found with ID "${q}".`);
+    setEmergencyMatches(null);
+
+    const exact = attendees.find((a) => a.serial_code.toLowerCase() === q.toLowerCase());
+    if (exact) {
+      setEmergencyResult(exact);
+      return;
     }
+
+    if (q.length <= 8) {
+      const suffixMatches = attendees.filter((a) => a.serial_code.toLowerCase().endsWith(q.toLowerCase()));
+      if (suffixMatches.length === 1) {
+        setEmergencyResult(suffixMatches[0]);
+        return;
+      }
+      if (suffixMatches.length > 1) {
+        setEmergencyResult(null);
+        setEmergencyMatches(suffixMatches);
+        return;
+      }
+    }
+
+    setEmergencyResult(null);
+    setEmergencyError(`No attendee found with ID "${q}".`);
+  }
+
+  function pickEmergencyMatch(attendee: Attendee) {
+    setEmergencyMatches(null);
+    setEmergencyResult(attendee);
   }
 
   function handleEmergencyLookup(e: React.FormEvent) {
@@ -456,11 +488,12 @@ function AdminPage() {
     setEmergencyTab(next);
     if (next === "qr") {
       setEmergencyError(null);
+      setEmergencyMatches(null);
     }
   }
 
   useEffect(() => {
-    if (view === "emergency" && emergencyTab === "qr" && !emergencyResult) {
+    if (view === "emergency" && emergencyTab === "qr" && !emergencyResult && !emergencyMatches) {
       emergencyDecodedOnceRef.current = false;
       startEmergencyScanner();
     } else {
@@ -470,11 +503,12 @@ function AdminPage() {
       stopEmergencyScanner();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, emergencyTab, emergencyResult]);
+  }, [view, emergencyTab, emergencyResult, emergencyMatches]);
 
   function resetEmergency() {
     setEmergencySerial("");
     setEmergencyResult(null);
+    setEmergencyMatches(null);
     setEmergencyError(null);
     emergencyDecodedOnceRef.current = false;
     setEmergencyTab("qr");
@@ -655,6 +689,28 @@ function AdminPage() {
                     Look up another
                   </button>
                 </>
+              ) : emergencyMatches ? (
+                <>
+                  <p className="qr-help">
+                    Multiple attendees end in "{emergencySerial.trim()}" — pick one:
+                  </p>
+                  <div className="id-matches">
+                    {emergencyMatches.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="id-match-btn"
+                        onClick={() => pickEmergencyMatch(a)}
+                      >
+                        <span className="id-match-serial">{a.serial_code}</span>
+                        <span className="id-match-name">{a.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button className="primary-btn confirm-back-btn" onClick={resetEmergency}>
+                    Start over
+                  </button>
+                </>
               ) : (
                 <>
                   <div className="tab-row-wrap">
@@ -707,8 +763,11 @@ function AdminPage() {
                         className="id-input onboard-field"
                         autoFocus
                         value={emergencySerial}
-                        onChange={(e) => setEmergencySerial(e.target.value)}
-                        placeholder="e.g. ICORD25IN519"
+                        onChange={(e) => {
+                          setEmergencySerial(e.target.value);
+                          if (emergencyError) setEmergencyError(null);
+                        }}
+                        placeholder="Full ID, or just the last 4 digits"
                       />
 
                       {emergencyError && (

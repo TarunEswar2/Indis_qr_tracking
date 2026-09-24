@@ -81,6 +81,48 @@ export async function getAttendeeBySerial(serialCode: string) {
 }
 
 /**
+ * Look up attendee(s) by full serial code OR just the last few characters
+ * printed under the QR (across this event's codes, the last 4 characters
+ * are unique for all but a couple of pairs). Tries an exact match first;
+ * if that misses, falls back to a suffix match so staff can type just
+ * those last digits instead of the whole ID. Never returns phone/email
+ * (see ATTENDEE_COLUMNS_NO_CONTACT) — this is the volunteer-safe lookup,
+ * same as getAttendeeBySerial.
+ *
+ * A suffix match can legitimately return more than one attendee — a
+ * handful of IDs in this dataset share their last 4 characters even
+ * though the full codes differ (e.g. "INDIS2026-1234" vs
+ * "INDIS-OR-2026-1234"). Callers should show all returned matches
+ * (name + serial) for the person to pick from rather than assuming the
+ * first one is right.
+ */
+export async function findAttendeesBySerial(query: string): Promise<Attendee[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const { data: exact, error: exactError } = await supabase
+    .from("attendees")
+    .select(ATTENDEE_COLUMNS_NO_CONTACT)
+    .ilike("serial_code", q)
+    .limit(1);
+  if (exactError) throw exactError;
+  if (exact && exact.length > 0) return exact as unknown as Attendee[];
+
+  // No exact match. Only fall back to a suffix search for reasonably short
+  // queries — a longer string that still didn't match exactly is more
+  // likely a typo than an intentional "just the last few digits" search.
+  if (q.length > 8) return [];
+
+  const { data: suffix, error: suffixError } = await supabase
+    .from("attendees")
+    .select(ATTENDEE_COLUMNS_NO_CONTACT)
+    .ilike("serial_code", `%${q}`)
+    .limit(10);
+  if (suffixError) throw suffixError;
+  return (suffix ?? []) as unknown as Attendee[];
+}
+
+/**
  * Mark one itinerary item as fulfilled for an attendee, and log the scan.
  * Safe to call twice — it just overwrites the timestamp — but the UI
  * should warn the volunteer on a re-scan so they don't double-serve food.

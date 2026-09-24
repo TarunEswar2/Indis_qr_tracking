@@ -5,6 +5,7 @@ import {
   Attendee,
   CategorySettings,
   ItineraryKey,
+  findAttendeesBySerial,
   getAttendeeBySerial,
   getCategorySettings,
   getLiveDay,
@@ -258,6 +259,10 @@ function ScanScreen({
   const [notFound, setNotFound] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkedAttendee, setCheckedAttendee] = useState<Attendee | null>(null);
+  // Populated instead of checkedAttendee when the typed ID is short enough
+  // to be "just the last few digits" and more than one attendee's serial
+  // ends with it (rare — see findAttendeesBySerial in supabaseClient.ts).
+  const [idMatches, setIdMatches] = useState<Attendee[] | null>(null);
   const scannerRef = useRef<any>(null);
   // html5-qrcode fires its decode callback for every matching video frame,
   // and scanner.stop() is async — so several frames can decode the same
@@ -320,9 +325,18 @@ function ScanScreen({
     if (checking || !idValue.trim()) return;
     setChecking(true);
     setNotFound(null);
+    setIdMatches(null);
     try {
-      const attendee = await getAttendeeBySerial(idValue.trim());
-      setCheckedAttendee(attendee);
+      const matches = await findAttendeesBySerial(idValue.trim());
+      if (matches.length === 1) {
+        setCheckedAttendee(matches[0]);
+      } else if (matches.length > 1) {
+        setIdMatches(matches);
+        setCheckedAttendee(null);
+      } else {
+        setNotFound("ID not found, Check again or try scanning QR again.");
+        setCheckedAttendee(null);
+      }
     } catch {
       setNotFound("ID not found, Check again or try scanning QR again.");
       setCheckedAttendee(null);
@@ -331,10 +345,16 @@ function ScanScreen({
     }
   }
 
+  function pickMatch(attendee: Attendee) {
+    setIdMatches(null);
+    setCheckedAttendee(attendee);
+  }
+
   function handleIdChange(e: React.ChangeEvent<HTMLInputElement>) {
     setIdValue(e.target.value);
     if (notFound) setNotFound(null);
     if (checkedAttendee) setCheckedAttendee(null);
+    if (idMatches) setIdMatches(null);
   }
 
   async function startScanner() {
@@ -489,7 +509,7 @@ function ScanScreen({
                 <input
                   id="delegate-id"
                   className="id-input"
-                  placeholder="Enter unique ID"
+                  placeholder="Full ID, or just the last 4 digits"
                   value={idValue}
                   onChange={handleIdChange}
                 />
@@ -497,7 +517,7 @@ function ScanScreen({
               <button
                 className="check-btn"
                 onClick={runCheck}
-                disabled={!idValue.trim() || checking || Boolean(checkedAttendee)}
+                disabled={!idValue.trim() || checking || Boolean(checkedAttendee) || Boolean(idMatches)}
               >
                 {checking ? "Checking…" : "Check"}
               </button>
@@ -510,6 +530,18 @@ function ScanScreen({
               </div>
             )}
           </div>
+
+          {idMatches && (
+            <div className="id-matches">
+              <p className="qr-help">Multiple delegates end in "{idValue.trim()}" — pick one:</p>
+              {idMatches.map((a) => (
+                <button key={a.id} type="button" className="id-match-btn" onClick={() => pickMatch(a)}>
+                  <span className="id-match-serial">{a.serial_code}</span>
+                  <span className="id-match-name">{a.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {checkedAttendee && (
             <>

@@ -862,6 +862,43 @@
           border-radius: 12px;
           padding: 12px 14px;
         }
+        /* Suffix-search collisions (typing just the last 4 digits and more
+           than one attendee matches) — a short pick list instead of the
+           usual single delegate-card, styled like the id-error-box family
+           it sits next to. */
+        .id-matches {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          margin-top: 4px;
+        }
+        .id-match-btn {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          background: var(--white);
+          border: 1.5px solid var(--black);
+          border-radius: 12px;
+          padding: 10px 14px;
+          font-family: inherit;
+          cursor: pointer;
+          text-align: left;
+          transition: transform 0.1s ease, background 0.1s ease;
+        }
+        .id-match-btn:active {
+          transform: scale(0.98);
+          background: var(--grey-100);
+        }
+        .id-match-serial {
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.01em;
+        }
+        .id-match-name {
+          font-size: 13px;
+          color: var(--grey-500);
+        }
         .id-error-icon {
           color: var(--error);
           flex-shrink: 0;
