@@ -1288,6 +1288,24 @@
   background: #1a7f37;
   margin-left: 6px;
 }
+/* Review card shown after a Scan QR match, before anything is written to
+   the database — see ScanQrTool in components/MaintenanceFlow.tsx. */
+.maint-confirm-card {
+  border: 1.5px solid var(--black);
+  border-radius: 14px;
+  padding: 16px;
+}
+.maint-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.maint-confirm-actions .admin-entry-btn {
+  margin-bottom: 0;
+}
+.maint-confirm-actions .onboard-register-btn {
+  margin: 0;
+}
 .emergency-contact-rows {
   margin-top: 18px;
   border-top: 1px solid var(--black);

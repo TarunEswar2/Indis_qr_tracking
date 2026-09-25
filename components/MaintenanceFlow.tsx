@@ -50,7 +50,6 @@ function BackArrow(props: React.SVGProps<SVGSVGElement>) {
 }
 
 type Tool = "scanqr" | "edit" | null;
-type ScanResult = { serial: string; found: boolean; name?: string; alreadyVerified?: boolean; saveError?: boolean };
 
 function ScanQrTool({
   attendees,
@@ -63,46 +62,70 @@ function ScanQrTool({
 }) {
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<ScanResult | null>(null);
-  const [tally, setTally] = useState({ checked: 0, ok: 0, bad: 0 });
+  const [notFoundSerial, setNotFoundSerial] = useState<string | null>(null);
+  // The matched attendee waiting on-screen for a human decision — nothing
+  // is written to the database until "Confirm verified" is pressed. The
+  // scanner is paused while this is set, so a second badge can't sneak in
+  // underneath before you've reviewed the first one.
+  const [pending, setPending] = useState<Attendee | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const scannerRef = useRef<any>(null);
-  const busyRef = useRef(false);
+  const decodedOnceRef = useRef(false);
+
+  // Checked/unchecked comes straight from the database (the id_verified
+  // column on every attendee already loaded), not a count of this
+  // session's scans — so it reads correctly even if you close and reopen
+  // this tool partway through.
+  const checkedCount = attendees.filter((a) => a.id_verified).length;
+  const uncheckedCount = attendees.length - checkedCount;
 
   async function handleDecoded(serial: string) {
-    if (busyRef.current) return;
-    busyRef.current = true;
+    if (decodedOnceRef.current) return;
+    decodedOnceRef.current = true;
+    await stopScanner();
 
     const trimmed = serial.trim();
     const match = attendees.find((a) => a.serial_code.toLowerCase() === trimmed.toLowerCase());
-    setTally((prev) => ({
-      checked: prev.checked + 1,
-      ok: prev.ok + (match ? 1 : 0),
-      bad: prev.bad + (match ? 0 : 1),
-    }));
-
+    setSaveError(null);
     if (match) {
-      const wasAlreadyVerified = match.id_verified;
-      setLastResult({ serial: trimmed, found: true, name: match.name, alreadyVerified: wasAlreadyVerified });
-      if (!wasAlreadyVerified) {
-        try {
-          await setAttendeeIdVerified(match.id, true);
-          onAttendeeUpdated({ ...match, id_verified: true });
-        } catch {
-          // Don't silently claim it's verified if the write failed —
-          // the next scan of the same badge will just try again.
-          setLastResult({ serial: trimmed, found: true, name: match.name, saveError: true });
-        }
-      }
+      setNotFoundSerial(null);
+      setPending(match);
     } else {
-      setLastResult({ serial: trimmed, found: false });
+      setPending(null);
+      setNotFoundSerial(trimmed);
+      // Nothing to confirm — just flash the message and keep scanning.
+      setTimeout(() => {
+        decodedOnceRef.current = false;
+        startScanner();
+      }, RESUME_DELAY_MS);
     }
+  }
 
-    // Keep scanning — this tool is for burning through a stack of badges,
-    // not stopping on the first one. Give the volunteer a beat to read the
-    // result before the next decode can register.
-    setTimeout(() => {
-      busyRef.current = false;
-    }, RESUME_DELAY_MS);
+  async function handleConfirm() {
+    if (!pending || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await setAttendeeIdVerified(pending.id, true);
+      onAttendeeUpdated({ ...pending, id_verified: true });
+      resumeScanning();
+    } catch {
+      setSaveError("Couldn't save — try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleSkip() {
+    resumeScanning();
+  }
+
+  function resumeScanning() {
+    setPending(null);
+    setSaveError(null);
+    decodedOnceRef.current = false;
+    startScanner();
   }
 
   async function startScanner() {
@@ -170,39 +193,91 @@ function ScanQrTool({
       </div>
 
       <p className="qr-help">
-        Checked <b>{tally.checked}</b> · <span className="maint-ok">{tally.ok} verified</span> ·{" "}
-        <span className="maint-bad">{tally.bad} failed</span>
+        <span className="maint-ok">{checkedCount} checked</span> ·{" "}
+        <span className="maint-bad">{uncheckedCount} unchecked</span> · {attendees.length} total
       </p>
 
-      <div className="qr-pane">
-        <div className="viewfinder">
-          <div id={SCANNER_ELEMENT_ID} className="viewfinder-camera" />
-          <span className="corner corner-tl" />
-          <span className="corner corner-tr" />
-          <span className="corner corner-bl" />
-          <span className="corner corner-br" />
-          {scannerActive && <span className="scan-line" />}
-        </div>
-        {cameraError ? (
-          <p className="qr-help qr-help-warn">{cameraError}</p>
-        ) : (
-          <p className="qr-help">Scan badges one after another — it keeps running</p>
-        )}
-      </div>
+      {pending ? (
+        <div className="maint-confirm-card">
+          <div className="delegate-block">
+            <p className="delegate-serial">{pending.serial_code}</p>
+            <p className="delegate-tag">{pending.designation || "Delegate"}</p>
+            <p className="delegate-name">{pending.name}</p>
+            <p className="delegate-role">{pending.organization || "—"}</p>
+          </div>
+          <div className="emergency-contact-rows">
+            <div className="emergency-contact-row">
+              <span className="emergency-contact-label">Phone</span>
+              <span className="emergency-contact-value">{pending.phone || "Not on file"}</span>
+            </div>
+            <div className="emergency-contact-row">
+              <span className="emergency-contact-label">Email</span>
+              <span className="emergency-contact-value">{pending.email || "Not on file"}</span>
+            </div>
+            <div className="emergency-contact-row">
+              <span className="emergency-contact-label">Days registered</span>
+              <span className="emergency-contact-value">
+                {Array.isArray(pending.registered_days) && pending.registered_days.length > 0
+                  ? [...pending.registered_days].sort().join(", ")
+                  : "—"}
+              </span>
+            </div>
+            <div className="emergency-contact-row">
+              <span className="emergency-contact-label">Currently</span>
+              <span className="emergency-contact-value">
+                {pending.id_verified ? "✓ Already verified" : "Not yet verified"}
+              </span>
+            </div>
+          </div>
 
-      {lastResult && (
-        <div className={`maint-result ${lastResult.found && !lastResult.saveError ? "maint-result-ok" : "maint-result-bad"}`}>
-          <p className="maint-result-serial">{lastResult.serial}</p>
-          <p className="maint-result-status">
-            {!lastResult.found
-              ? "✗ Not found in the system"
-              : lastResult.saveError
-              ? `⚠ Found — ${lastResult.name} — couldn't save verified status, rescan to retry`
-              : lastResult.alreadyVerified
-              ? `✓ Already verified — ${lastResult.name}`
-              : `✓ Verified — ${lastResult.name}`}
+          {saveError && (
+            <div className="id-error-box" style={{ marginTop: 12 }}>
+              <p className="id-error-text">{saveError}</p>
+            </div>
+          )}
+
+          <p className="qr-help" style={{ marginTop: 12 }}>
+            Does everything above look right for this badge?
           </p>
+          <div className="maint-confirm-actions">
+            <button type="button" className="onboard-entry-btn admin-entry-btn" onClick={handleSkip} disabled={saving}>
+              Skip
+            </button>
+            <button
+              type="button"
+              className="primary-btn onboard-register-btn"
+              onClick={handleConfirm}
+              disabled={saving || pending.id_verified}
+            >
+              {saving ? "Saving…" : pending.id_verified ? "Already verified" : "Confirm verified"}
+            </button>
+          </div>
         </div>
+      ) : (
+        <>
+          <div className="qr-pane">
+            <div className="viewfinder">
+              <div id={SCANNER_ELEMENT_ID} className="viewfinder-camera" />
+              <span className="corner corner-tl" />
+              <span className="corner corner-tr" />
+              <span className="corner corner-bl" />
+              <span className="corner corner-br" />
+              {scannerActive && <span className="scan-line" />}
+            </div>
+            {cameraError ? (
+              <p className="qr-help qr-help-warn">{cameraError}</p>
+            ) : (
+              <p className="qr-help">Scan a badge to review it</p>
+            )}
+          </div>
+
+          {notFoundSerial && (
+            <div className="maint-result maint-result-bad">
+              <p className="maint-result-serial">{notFoundSerial}</p>
+              <p className="maint-result-status">✗ Not found in the system</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
