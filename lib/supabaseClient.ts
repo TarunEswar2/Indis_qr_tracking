@@ -17,6 +17,9 @@ export const ITINERARY_ITEMS = [
   { key: "high_tea_day1", label: "High Tea — Day 1" },
   { key: "high_tea_day2", label: "High Tea — Day 2" },
   { key: "high_tea_day3", label: "High Tea — Day 3" },
+  { key: "coffee_day1", label: "Coffee — Day 1" },
+  { key: "coffee_day2", label: "Coffee — Day 2" },
+  { key: "coffee_day3", label: "Coffee — Day 3" },
   { key: "gala_dinner", label: "Gala Dinner" },
 ] as const;
 
@@ -248,6 +251,79 @@ export async function setAttendeeRegisteredDays(attendeeId: string, days: number
     .update({ registered_days: days })
     .eq("id", attendeeId);
   if (error) throw error;
+}
+
+/**
+ * Full-record edit — used by the admin dashboard's Maintenance -> "Edit
+ * participant" tool to correct any of a person's own fields after the
+ * fact (name misspelled, wrong org, a phone number added later, etc.).
+ * serial_code is deliberately not editable here — it's what's physically
+ * printed on the badge QR, so changing it in the database without
+ * reprinting the badge would just break that person's scan.
+ */
+export type AttendeeEditableFields = {
+  name: string;
+  organization: string | null;
+  designation: string;
+  phone: string | null;
+  email: string | null;
+  registered_days: number[];
+};
+
+export async function updateAttendee(attendeeId: string, fields: AttendeeEditableFields) {
+  const { data, error } = await supabase
+    .from("attendees")
+    .update({
+      name: fields.name,
+      organization: fields.organization || null,
+      designation: fields.designation,
+      phone: fields.phone || null,
+      email: fields.email || null,
+      registered_days: fields.registered_days,
+    })
+    .eq("id", attendeeId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Attendee;
+}
+
+// ---------------------------------------------------------------------
+// Walk-in headcount for High Tea / Coffee — people served at the counter
+// with no badge/QR at all (see walkin_counts in supabase/schema.sql).
+// Read-then-write rather than an atomic increment: fine for a handful of
+// volunteer devices bumping a conference headcount, not built to survive
+// heavy concurrent writes.
+// ---------------------------------------------------------------------
+
+export type WalkinItem = "high_tea" | "coffee";
+
+/** All six day/item counts at once, keyed as "day:item" (e.g. "1:coffee"). */
+export async function getWalkinCounts(): Promise<Record<string, number>> {
+  const { data, error } = await supabase.from("walkin_counts").select("day, item, count");
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  for (const row of data ?? []) {
+    out[`${row.day}:${row.item}`] = row.count;
+  }
+  return out;
+}
+
+/** Bump (or reduce, with a negative delta) one day/item's walk-in count. */
+export async function bumpWalkinCount(day: Day, item: WalkinItem, delta: number): Promise<number> {
+  const { data: current, error: readError } = await supabase
+    .from("walkin_counts")
+    .select("count")
+    .eq("day", day)
+    .eq("item", item)
+    .maybeSingle();
+  if (readError) throw readError;
+  const next = Math.max(0, (current?.count ?? 0) + delta);
+  const { error: writeError } = await supabase
+    .from("walkin_counts")
+    .upsert({ day, item, count: next }, { onConflict: "day,item" });
+  if (writeError) throw writeError;
+  return next;
 }
 
 // ---------------------------------------------------------------------

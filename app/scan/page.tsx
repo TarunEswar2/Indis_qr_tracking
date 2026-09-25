@@ -5,12 +5,15 @@ import {
   Attendee,
   CategorySettings,
   ItineraryKey,
+  bumpWalkinCount,
   findAttendeesBySerial,
   getAttendeeBySerial,
   getCategorySettings,
   getLiveDay,
+  getWalkinCounts,
   isRegisteredForDay,
   markItineraryItem,
+  WalkinItem,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
 import AuthGate, { readSessionUser } from "@/components/AuthGate";
@@ -21,11 +24,14 @@ import AuthGate, { readSessionUser } from "@/components/AuthGate";
 // wired to the real Supabase attendees table instead of mock state.
 //
 // Real event structure (3 days):
-//   Day 1: Conference Kit, Lunch, High Tea
-//   Day 2: Lunch, High Tea
-//   Day 3: Lunch, High Tea, Gala Dinner
-// keyFor() below maps that day+category shape onto the real Supabase
-// columns (kit_received, lunch_day1..3, high_tea_day1..3, gala_dinner).
+//   Day 1: Conference Kit, Lunch, High Tea, Coffee
+//   Day 2: Conference Kit, Lunch, High Tea, Coffee, Gala Dinner
+//   Day 3: Conference Kit, Lunch, High Tea, Coffee
+// Conference Kit is a one-time item (single kit_received column) but is
+// now offered on every day, not just Day 1, so someone who arrives late
+// can still collect it. keyFor() below maps that day+category shape onto
+// the real Supabase columns (kit_received, lunch_day1..3,
+// high_tea_day1..3, coffee_day1..3, gala_dinner).
 //
 // "Today" (which day is open/closed/locked on the home screen) is no
 // longer hardcoded — it's the admin-set "live day" (see AdminScreen /
@@ -33,25 +39,34 @@ import AuthGate, { readSessionUser } from "@/components/AuthGate";
 // redeploy the app each morning of the conference to advance the day.
 // ---------------------------------------------------------------------------
 
-type Category = "kit" | "lunch" | "highTea" | "gala";
+type Category = "kit" | "lunch" | "highTea" | "coffee" | "gala";
 type Day = 1 | 2 | 3;
 
 const CATEGORY_LABEL: Record<Category, string> = {
   kit: "Conference Kit",
   lunch: "Lunch",
   highTea: "High Tea",
+  coffee: "Coffee",
   gala: "Gala Dinner",
 };
 
 const DAY_CATEGORIES: Record<Day, Category[]> = {
-  1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea", "gala"],
-  3: ["lunch", "highTea"],
+  1: ["kit", "lunch", "highTea", "coffee"],
+  2: ["kit", "lunch", "highTea", "coffee", "gala"],
+  3: ["kit", "lunch", "highTea", "coffee"],
+};
+
+// Categories that also serve people with no badge/QR at all — the scan
+// screen shows a "+1 walk-in" counter for these so that headcount isn't
+// lost. keyed to the walkin_counts table's `item` values.
+const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
+  highTea: "high_tea",
+  coffee: "coffee",
 };
 
 // day + category -> real Supabase column, or null if that combo doesn't apply.
 function keyFor(day: Day, category: Category): ItineraryKey | null {
-  if (category === "kit") return day === 1 ? "kit_received" : null;
+  if (category === "kit") return "kit_received"; // one-time item, offered every day
   if (category === "lunch") {
     if (day === 1) return "lunch_day1";
     if (day === 2) return "lunch_day2";
@@ -61,6 +76,11 @@ function keyFor(day: Day, category: Category): ItineraryKey | null {
     if (day === 1) return "high_tea_day1";
     if (day === 2) return "high_tea_day2";
     return "high_tea_day3";
+  }
+  if (category === "coffee") {
+    if (day === 1) return "coffee_day1";
+    if (day === 2) return "coffee_day2";
+    return "coffee_day3";
   }
   if (category === "gala") return day === 2 ? "gala_dinner" : null;
   return null;
@@ -167,10 +187,21 @@ function GalaIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function CoffeeIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H17" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 3c.5 1-.7 1.3-.7 2.3S8.5 6.6 8 7.6M12 3c.5 1-.7 1.3-.7 2.3S12.5 6.6 12 7.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const CATEGORY_ICON: Record<Category, (props: React.SVGProps<SVGSVGElement>) => JSX.Element> = {
   kit: KitIcon,
   lunch: LunchIcon,
   highTea: TeaIcon,
+  coffee: CoffeeIcon,
   gala: GalaIcon,
 };
 
@@ -263,6 +294,11 @@ function ScanScreen({
   // to be "just the last few digits" and more than one attendee's serial
   // ends with it (rare — see findAttendeesBySerial in supabaseClient.ts).
   const [idMatches, setIdMatches] = useState<Attendee[] | null>(null);
+  // Walk-in (no badge/QR) headcount for High Tea / Coffee — see
+  // WALKIN_TRACKED above and walkin_counts in supabase/schema.sql.
+  const walkinItem = WALKIN_TRACKED[category];
+  const [walkinCount, setWalkinCount] = useState<number | null>(null);
+  const [walkinBumping, setWalkinBumping] = useState(false);
   const scannerRef = useRef<any>(null);
   // html5-qrcode fires its decode callback for every matching video frame,
   // and scanner.stop() is async — so several frames can decode the same
@@ -452,6 +488,39 @@ function ScanScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!walkinItem) {
+      setWalkinCount(null);
+      return;
+    }
+    let cancelled = false;
+    getWalkinCounts()
+      .then((counts) => {
+        if (!cancelled) setWalkinCount(counts[`${day}:${walkinItem}`] ?? 0);
+      })
+      .catch(() => {
+        if (!cancelled) setWalkinCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, walkinItem]);
+
+  async function bumpWalkin() {
+    if (!walkinItem || walkinBumping) return;
+    setWalkinBumping(true);
+    try {
+      const next = await bumpWalkinCount(day, walkinItem, 1);
+      setWalkinCount(next);
+    } catch {
+      // Leave the displayed count as-is — better than showing a wrong
+      // number as if the bump had gone through.
+    } finally {
+      setWalkinBumping(false);
+    }
+  }
+
   return (
     <div className="screen">
       <div className="scan-header">
@@ -462,6 +531,17 @@ function ScanScreen({
           Day {String(day).padStart(2, "0")}, {CATEGORY_LABEL[category]}
         </h1>
       </div>
+
+      {walkinItem && (
+        <div className="walkin-row">
+          <span className="walkin-label">
+            Walk-ins served (no badge) — <b>{walkinCount ?? "…"}</b>
+          </span>
+          <button type="button" className="walkin-btn" onClick={bumpWalkin} disabled={walkinBumping || walkinCount === null}>
+            +1 walk-in
+          </button>
+        </div>
+      )}
 
       <div className="tab-row-wrap">
         <div className="tabs">

@@ -22,6 +22,12 @@ create table if not exists attendees (
 alter table attendees add column if not exists lunch_day3 timestamptz;
 alter table attendees add column if not exists high_tea_day3 timestamptz;
 
+-- Coffee — a new tracked item, structured exactly like lunch/high tea:
+-- one column per day, scanned the same way, shown as its own category.
+alter table attendees add column if not exists coffee_day1 timestamptz;
+alter table attendees add column if not exists coffee_day2 timestamptz;
+alter table attendees add column if not exists coffee_day3 timestamptz;
+
 -- Designation (role/title at the event — e.g. "Delegate", "Speaker",
 -- "Volunteer"), contact info, and which days someone actually registered
 -- for (people can register for just 1, 2, or all 3 days — this is what
@@ -86,6 +92,9 @@ insert into category_settings (key, enabled) values
   ('high_tea_day1', true),
   ('high_tea_day2', true),
   ('high_tea_day3', true),
+  ('coffee_day1', true),
+  ('coffee_day2', true),
+  ('coffee_day3', true),
   ('gala_dinner', true)
 on conflict (key) do nothing;
 
@@ -309,3 +318,30 @@ $$;
 -- To remove someone:
 --
 --   delete from app_users where username = 'priya';
+
+-- ---------------------------------------------------------------------
+-- Walk-in headcount for High Tea / Coffee: people served at the counter
+-- who don't have a badge/QR at all (not in `attendees`, not an on-spot
+-- registration either — just a headcount, not a person record). One row
+-- per day+item, bumped by the "+1 walk-in (no QR)" button on the scan
+-- screen. Included in the admin export summary alongside the scanned
+-- counts so catering gets the real total served, not just the QR count.
+-- Same trust model as the rest of this app (anon key, allow-all RLS) —
+-- fine for a conference headcount, not meant to resist a malicious actor.
+create table if not exists walkin_counts (
+  day integer not null check (day in (1, 2, 3)),
+  item text not null check (item in ('high_tea', 'coffee')),
+  count integer not null default 0,
+  primary key (day, item)
+);
+
+insert into walkin_counts (day, item, count)
+select d, i, 0
+from unnest(array[1, 2, 3]) as d
+cross join unnest(array['high_tea', 'coffee']) as i
+on conflict (day, item) do nothing;
+
+alter table walkin_counts enable row level security;
+
+create policy "allow all on walkin_counts" on walkin_counts
+  for all using (true) with check (true);

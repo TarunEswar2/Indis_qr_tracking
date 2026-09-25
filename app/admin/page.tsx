@@ -4,21 +4,27 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   Attendee,
+  AttendeeEditableFields,
   CategorySettings,
   ITINERARY_ITEMS,
   ItineraryKey,
+  bumpWalkinCount,
   getCategorySettings,
   getLiveDay,
+  getWalkinCounts,
   isRegisteredForDay,
   setAttendeeRegisteredDays,
   setCategoryEnabled,
   setItineraryItem,
   setLiveDay,
   supabase,
+  updateAttendee,
+  WalkinItem,
 } from "@/lib/supabaseClient";
 import TopNav from "@/components/TopNav";
 import AuthGate, { readSessionUser } from "@/components/AuthGate";
 import OnboardFlow from "@/components/OnboardFlow";
+import MaintenanceFlow from "@/components/MaintenanceFlow";
 
 // ---------------------------------------------------------------------------
 // This screen mirrors prototype_ui/indis-scan-flow.jsx's AdminScreen exactly
@@ -34,13 +40,14 @@ import OnboardFlow from "@/components/OnboardFlow";
 // the *volunteer* scan flow treats as "today" — see lib/supabaseClient.ts).
 // ---------------------------------------------------------------------------
 
-type Category = "kit" | "lunch" | "highTea" | "gala";
+type Category = "kit" | "lunch" | "highTea" | "coffee" | "gala";
 type Day = 1 | 2 | 3;
 
 const CATEGORY_LABEL: Record<Category, string> = {
   kit: "Conference Kit",
   lunch: "Lunch",
   highTea: "High Tea",
+  coffee: "Coffee",
   gala: "Gala Dinner",
 };
 
@@ -48,19 +55,29 @@ const SHORT_LABEL: Record<Category, string> = {
   kit: "Kit",
   lunch: "Lunch",
   highTea: "Tea",
+  coffee: "Coffee",
   gala: "Gala",
 };
 
+// Kit is a one-time item now offered on every day (see keyFor below), so
+// it appears in every day's category list.
 const DAY_CATEGORIES: Record<Day, Category[]> = {
-  1: ["kit", "lunch", "highTea"],
-  2: ["lunch", "highTea", "gala"],
-  3: ["lunch", "highTea"],
+  1: ["kit", "lunch", "highTea", "coffee"],
+  2: ["kit", "lunch", "highTea", "coffee", "gala"],
+  3: ["kit", "lunch", "highTea", "coffee"],
 };
 
-const ALL_CATEGORIES: Category[] = ["kit", "lunch", "highTea", "gala"];
+const ALL_CATEGORIES: Category[] = ["kit", "lunch", "highTea", "coffee", "gala"];
+
+// Categories that also serve people with no badge/QR at all — the
+// dashboard shows their walk-in headcount alongside the scanned count.
+const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
+  highTea: "high_tea",
+  coffee: "coffee",
+};
 
 function keyFor(day: Day, category: Category): ItineraryKey | null {
-  if (category === "kit") return day === 1 ? "kit_received" : null;
+  if (category === "kit") return "kit_received"; // one-time item, offered every day
   if (category === "lunch") {
     if (day === 1) return "lunch_day1";
     if (day === 2) return "lunch_day2";
@@ -70,6 +87,11 @@ function keyFor(day: Day, category: Category): ItineraryKey | null {
     if (day === 1) return "high_tea_day1";
     if (day === 2) return "high_tea_day2";
     return "high_tea_day3";
+  }
+  if (category === "coffee") {
+    if (day === 1) return "coffee_day1";
+    if (day === 2) return "coffee_day2";
+    return "coffee_day3";
   }
   if (category === "gala") return day === 2 ? "gala_dinner" : null;
   return null;
@@ -135,6 +157,20 @@ function WarningIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function WrenchIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" {...props}>
+      <path
+        d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.1 2.1-2.1-.6-.6-2.1 2.1-2.1Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
   return (
     <button
@@ -158,9 +194,9 @@ function StatusDot({ done }: { done: boolean }) {
 // ---------- export helpers (unchanged real functionality) ----------
 
 const DAY_ITEMS: Record<Day, ItineraryKey[]> = {
-  1: ["kit_received", "lunch_day1", "high_tea_day1"],
-  2: ["lunch_day2", "high_tea_day2", "gala_dinner"],
-  3: ["lunch_day3", "high_tea_day3"],
+  1: ["kit_received", "lunch_day1", "high_tea_day1", "coffee_day1"],
+  2: ["kit_received", "lunch_day2", "high_tea_day2", "coffee_day2", "gala_dinner"],
+  3: ["kit_received", "lunch_day3", "high_tea_day3", "coffee_day3"],
 };
 
 const EMERGENCY_SCANNER_ELEMENT_ID = "emergency-reader";
@@ -201,7 +237,8 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 function AdminPage() {
-  const [view, setView] = useState<"dashboard" | "onboard" | "emergency">("dashboard");
+  const [view, setView] = useState<"dashboard" | "onboard" | "emergency" | "maintenance">("dashboard");
+  const [walkinCounts, setWalkinCounts] = useState<Record<string, number>>({});
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [settings, setSettings] = useState<CategorySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -246,15 +283,17 @@ function AdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const [{ data, error: fetchError }, categorySettings, day] = await Promise.all([
+      const [{ data, error: fetchError }, categorySettings, day, walkins] = await Promise.all([
         supabase.from("attendees").select("*").order("name"),
         getCategorySettings(),
         getLiveDay().catch(() => 1 as const),
+        getWalkinCounts().catch(() => ({} as Record<string, number>)),
       ]);
       if (fetchError) throw fetchError;
       setAttendees((data ?? []) as Attendee[]);
       setSettings(categorySettings);
       setLiveDayState(day);
+      setWalkinCounts(walkins);
     } catch (e: any) {
       setError(
         e?.message?.includes("category_settings")
@@ -298,6 +337,19 @@ function AdminPage() {
       setError(`Couldn't update "${key}" — try again.`);
     } finally {
       setTogglingKey(null);
+    }
+  }
+
+  // Lets an admin correct a walk-in headcount by hand (e.g. a volunteer
+  // over/under-tapped the +1 button). Not surfaced as its own button row
+  // to keep the Categories panel simple — see the adjust buttons next to
+  // each walk-in count below.
+  async function adjustWalkin(item: WalkinItem, delta: number) {
+    try {
+      const next = await bumpWalkinCount(liveDay, item, delta);
+      setWalkinCounts((prev) => ({ ...prev, [`${liveDay}:${item}`]: next }));
+    } catch {
+      setError("Couldn't update that walk-in count — try again.");
     }
   }
 
@@ -574,10 +626,21 @@ function AdminPage() {
   function buildExportSheet(day?: Day) {
     const items = day ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key)) : ITINERARY_ITEMS;
     const total = filtered.length;
+    // Walk-in (no badge/QR) headcount for High Tea/Coffee — included so
+    // catering gets the real total served, not just the scanned count.
+    // "All days" export sums across days; a single-day export shows just
+    // that day's count.
+    const walkinDays: Day[] = day ? [day] : [1, 2, 3];
+    const walkinLines = (["high_tea", "coffee"] as WalkinItem[]).map((item) => {
+      const label = item === "high_tea" ? "High Tea" : "Coffee";
+      const sum = walkinDays.reduce((acc, d) => acc + (walkinCounts[`${d}:${item}`] ?? 0), 0);
+      return [`${label} walk-ins (no badge): ${sum}`];
+    });
     const summary: (string | number)[][] = [
       [`INDIS 2026 — ${day ? `Day ${day}` : "All days"} export`],
       [`Total participants: ${total}`],
       ...items.map((i) => [`${i.label} scanned: ${filtered.filter((a) => Boolean(a[i.key])).length} of ${total}`]),
+      ...walkinLines,
       [],
     ];
     const header = [
@@ -788,6 +851,14 @@ function AdminPage() {
                 </>
               )}
             </div>
+          ) : view === "maintenance" ? (
+            <MaintenanceFlow
+              attendees={attendees}
+              onBack={() => setView("dashboard")}
+              onAttendeeUpdated={(updated) =>
+                setAttendees((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
+              }
+            />
           ) : (
           <div className="screen admin-screen">
             {loading ? (
@@ -812,6 +883,14 @@ function AdminPage() {
                   >
                     <WarningIcon />
                     Emergency scan
+                  </button>
+                  <button
+                    className="onboard-entry-btn maintenance-entry-btn admin-entry-btn"
+                    onClick={() => setView("maintenance")}
+                    type="button"
+                  >
+                    <WrenchIcon />
+                    Maintenance
                   </button>
                 </div>
 
@@ -861,7 +940,31 @@ function AdminPage() {
                     return (
                       <div className="admin-cat-row" key={c}>
                         <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
-                        <span className="admin-cat-count">{scanCount(liveDay, c)} scanned</span>
+                        <span className="admin-cat-count">
+                          {scanCount(liveDay, c)} scanned
+                          {WALKIN_TRACKED[c] && (
+                            <span className="admin-walkin-adjust">
+                              {" · "}
+                              {walkinCounts[`${liveDay}:${WALKIN_TRACKED[c]!}`] ?? 0} walk-in
+                              <button
+                                type="button"
+                                className="admin-walkin-btn"
+                                onClick={() => adjustWalkin(WALKIN_TRACKED[c]!, -1)}
+                                aria-label={`Decrease ${CATEGORY_LABEL[c]} walk-in count`}
+                              >
+                                −
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-walkin-btn"
+                                onClick={() => adjustWalkin(WALKIN_TRACKED[c]!, 1)}
+                                aria-label={`Increase ${CATEGORY_LABEL[c]} walk-in count`}
+                              >
+                                +
+                              </button>
+                            </span>
+                          )}
+                        </span>
                         <Toggle
                           checked={Boolean(enabled)}
                           onChange={() => key && toggleCategory(key)}

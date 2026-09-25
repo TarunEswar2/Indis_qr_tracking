@@ -872,6 +872,65 @@
           gap: 8px;
           margin-top: 4px;
         }
+        /* Walk-in (no badge/QR) headcount counter on the High Tea / Coffee
+           scan screens — see WALKIN_TRACKED in app/scan/page.tsx. */
+        .walkin-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          background: var(--grey-100);
+          border: 1.5px solid var(--grey-300);
+          border-radius: 12px;
+          padding: 10px 14px;
+          margin-bottom: 12px;
+        }
+        .walkin-label {
+          font-size: 13px;
+          color: var(--grey-700);
+        }
+        .walkin-btn {
+          background: var(--black);
+          color: var(--white);
+          border: 1.5px solid var(--black);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          padding: 8px 14px;
+          border-radius: 10px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: transform 0.1s ease, opacity 0.1s ease;
+        }
+        .walkin-btn:active:not(:disabled) {
+          transform: scale(0.96);
+        }
+        .walkin-btn:disabled {
+          opacity: 0.6;
+          cursor: default;
+        }
+        /* Inline +/- adjust for a walk-in count in the admin Categories
+           panel (see WALKIN_TRACKED in app/admin/page.tsx). */
+        .admin-walkin-adjust {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .admin-walkin-btn {
+          width: 20px;
+          height: 20px;
+          line-height: 1;
+          border-radius: 6px;
+          border: 1.5px solid var(--grey-300);
+          background: var(--white);
+          font-family: inherit;
+          font-size: 13px;
+          cursor: pointer;
+          padding: 0;
+        }
+        .admin-walkin-btn:active {
+          transform: scale(0.94);
+        }
         .id-match-btn {
           display: flex;
           align-items: center;
@@ -1128,6 +1187,57 @@
 }
 .emergency-entry-btn:active {
   background: #fdeaea;
+}
+.maintenance-entry-btn {
+  border-color: var(--grey-500);
+  color: var(--grey-700);
+}
+.maintenance-entry-btn:active {
+  background: var(--grey-100);
+}
+
+/* Maintenance -> Scan QR / Edit participant (components/MaintenanceFlow.tsx) */
+.maint-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.maint-ok {
+  color: #1a7f37;
+  font-weight: 600;
+}
+.maint-bad {
+  color: #d33;
+  font-weight: 600;
+}
+.maint-result {
+  border-radius: 12px;
+  border: 1.5px solid var(--black);
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+.maint-result-ok {
+  background: #eaf7ee;
+  border-color: #1a7f37;
+}
+.maint-result-bad {
+  background: var(--error-wash);
+  border-color: #d33;
+}
+.maint-result-serial {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+.maint-result-status {
+  font-size: 13px;
+  margin: 0;
+}
+.maint-saved {
+  font-size: 13px;
+  color: #1a7f37;
+  font-weight: 600;
+  margin: 0;
 }
 .emergency-contact-rows {
   margin-top: 18px;
