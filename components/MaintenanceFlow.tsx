@@ -125,7 +125,13 @@ function ScanQrTool({
     setPending(null);
     setSaveError(null);
     decodedOnceRef.current = false;
-    startScanner();
+    // Don't call startScanner() here directly: the camera <div> only
+    // exists in the DOM once `pending` is null, and this setPending(null)
+    // hasn't been applied to the DOM yet in this same tick (that's what
+    // caused the black screen after "Confirm verified" — startScanner ran
+    // before the viewfinder div was back on screen, found no element, and
+    // silently bailed out). The effect below, keyed on `pending`, starts
+    // the camera once React has actually re-rendered the viewfinder.
   }
 
   async function startScanner() {
@@ -176,12 +182,17 @@ function ScanQrTool({
   }
 
   useEffect(() => {
+    // Only run the camera while the confirm card isn't showing — the
+    // viewfinder div isn't in the DOM while `pending` is set. This also
+    // covers the initial mount (pending starts out null) and every
+    // "Confirm"/"Skip" that clears it back to null.
+    if (pending) return;
     startScanner();
     return () => {
       stopScanner();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pending]);
 
   return (
     <div className="screen">
