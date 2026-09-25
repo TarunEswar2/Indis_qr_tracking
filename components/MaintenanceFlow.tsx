@@ -7,12 +7,15 @@ import { Attendee, AttendeeEditableFields, setAttendeeIdVerified, updateAttendee
 // the day-to-day scan/onboard/emergency flows.
 //
 // 1. Scan QR — a continuous badge-verification tester. Point the camera at
-//    a stack of printed badges one after another; each scan flashes a
-//    pass/fail against the already-loaded `attendees` array (no network
-//    call needed — same reasoning as Emergency scan) and keeps running,
-//    so you can burn through a box of badges before the event and catch
-//    any that don't decode or don't match a record, without navigating
-//    away between scans.
+//    a stack of printed badges one after another; each scan is checked
+//    against the already-loaded `attendees` array (no network call
+//    needed to look it up — same reasoning as Emergency scan) and keeps
+//    running, so you can burn through a box of badges before the event.
+//    A match is written straight to the database as id_verified = true
+//    (the same flag Edit participant's "Mark verified" toggle sets) —
+//    scanning it here IS the verification, no separate step needed. A
+//    code that doesn't decode to any record is flagged but changes
+//    nothing in the database.
 //
 // 2. Edit participant — search or scan a badge to pull up anyone, correct
 //    any of their own fields (name, organization, designation, phone,
@@ -47,9 +50,17 @@ function BackArrow(props: React.SVGProps<SVGSVGElement>) {
 }
 
 type Tool = "scanqr" | "edit" | null;
-type ScanResult = { serial: string; found: boolean; name?: string };
+type ScanResult = { serial: string; found: boolean; name?: string; alreadyVerified?: boolean; saveError?: boolean };
 
-function ScanQrTool({ attendees, onBack }: { attendees: Attendee[]; onBack: () => void }) {
+function ScanQrTool({
+  attendees,
+  onBack,
+  onAttendeeUpdated,
+}: {
+  attendees: Attendee[];
+  onBack: () => void;
+  onAttendeeUpdated: (a: Attendee) => void;
+}) {
   const [scannerActive, setScannerActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ScanResult | null>(null);
@@ -57,18 +68,34 @@ function ScanQrTool({ attendees, onBack }: { attendees: Attendee[]; onBack: () =
   const scannerRef = useRef<any>(null);
   const busyRef = useRef(false);
 
-  function handleDecoded(serial: string) {
+  async function handleDecoded(serial: string) {
     if (busyRef.current) return;
     busyRef.current = true;
 
     const trimmed = serial.trim();
     const match = attendees.find((a) => a.serial_code.toLowerCase() === trimmed.toLowerCase());
-    setLastResult({ serial: trimmed, found: Boolean(match), name: match?.name });
     setTally((prev) => ({
       checked: prev.checked + 1,
       ok: prev.ok + (match ? 1 : 0),
       bad: prev.bad + (match ? 0 : 1),
     }));
+
+    if (match) {
+      const wasAlreadyVerified = match.id_verified;
+      setLastResult({ serial: trimmed, found: true, name: match.name, alreadyVerified: wasAlreadyVerified });
+      if (!wasAlreadyVerified) {
+        try {
+          await setAttendeeIdVerified(match.id, true);
+          onAttendeeUpdated({ ...match, id_verified: true });
+        } catch {
+          // Don't silently claim it's verified if the write failed —
+          // the next scan of the same badge will just try again.
+          setLastResult({ serial: trimmed, found: true, name: match.name, saveError: true });
+        }
+      }
+    } else {
+      setLastResult({ serial: trimmed, found: false });
+    }
 
     // Keep scanning — this tool is for burning through a stack of badges,
     // not stopping on the first one. Give the volunteer a beat to read the
@@ -143,7 +170,7 @@ function ScanQrTool({ attendees, onBack }: { attendees: Attendee[]; onBack: () =
       </div>
 
       <p className="qr-help">
-        Checked <b>{tally.checked}</b> · <span className="maint-ok">{tally.ok} ok</span> ·{" "}
+        Checked <b>{tally.checked}</b> · <span className="maint-ok">{tally.ok} verified</span> ·{" "}
         <span className="maint-bad">{tally.bad} failed</span>
       </p>
 
@@ -164,10 +191,16 @@ function ScanQrTool({ attendees, onBack }: { attendees: Attendee[]; onBack: () =
       </div>
 
       {lastResult && (
-        <div className={`maint-result ${lastResult.found ? "maint-result-ok" : "maint-result-bad"}`}>
+        <div className={`maint-result ${lastResult.found && !lastResult.saveError ? "maint-result-ok" : "maint-result-bad"}`}>
           <p className="maint-result-serial">{lastResult.serial}</p>
           <p className="maint-result-status">
-            {lastResult.found ? `✓ Found — ${lastResult.name}` : "✗ Not found in the system"}
+            {!lastResult.found
+              ? "✗ Not found in the system"
+              : lastResult.saveError
+              ? `⚠ Found — ${lastResult.name} — couldn't save verified status, rescan to retry`
+              : lastResult.alreadyVerified
+              ? `✓ Already verified — ${lastResult.name}`
+              : `✓ Verified — ${lastResult.name}`}
           </p>
         </div>
       )}
@@ -543,7 +576,8 @@ export default function MaintenanceFlow({
 }) {
   const [tool, setTool] = useState<Tool>(null);
 
-  if (tool === "scanqr") return <ScanQrTool attendees={attendees} onBack={() => setTool(null)} />;
+  if (tool === "scanqr")
+    return <ScanQrTool attendees={attendees} onBack={() => setTool(null)} onAttendeeUpdated={onAttendeeUpdated} />;
   if (tool === "edit") return <EditParticipantTool attendees={attendees} onBack={() => setTool(null)} onAttendeeUpdated={onAttendeeUpdated} />;
 
   return (
