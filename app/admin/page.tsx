@@ -623,24 +623,36 @@ function AdminPage() {
   // Shared by both export formats. day: 1 | 2 | 3 restricts to just that
   // day's columns (for the caterer); "all" (attendeeTab) exports every
   // column. Cell values are "Done"/"" — never the actual timestamp.
+  // Maps an itinerary key back to its day + walk-in item, for keys that
+  // track a walk-in (no badge/QR) headcount alongside the scanned count —
+  // e.g. "high_tea_day2" -> {day: 2, item: "high_tea"}. Undefined for
+  // keys with no walk-in tracking (kit, lunch, gala).
+  function walkinFor(key: ItineraryKey): { day: Day; item: WalkinItem } | undefined {
+    const m = key.match(/^(high_tea|coffee)_day([123])$/);
+    if (!m) return undefined;
+    return { day: Number(m[2]) as Day, item: m[1] as WalkinItem };
+  }
+
   function buildExportSheet(day?: Day) {
     const items = day ? ITINERARY_ITEMS.filter((i) => DAY_ITEMS[day].includes(i.key)) : ITINERARY_ITEMS;
     const total = filtered.length;
-    // Walk-in (no badge/QR) headcount for High Tea/Coffee — included so
-    // catering gets the real total served, not just the scanned count.
-    // "All days" export sums across days; a single-day export shows just
-    // that day's count.
-    const walkinDays: Day[] = day ? [day] : [1, 2, 3];
-    const walkinLines = (["high_tea", "coffee"] as WalkinItem[]).map((item) => {
-      const label = item === "high_tea" ? "High Tea" : "Coffee";
-      const sum = walkinDays.reduce((acc, d) => acc + (walkinCounts[`${d}:${item}`] ?? 0), 0);
-      return [`${label} walk-ins (no badge): ${sum}`];
+    // Per-item total served = scanned (has a badge, QR'd) + walk-in (no
+    // badge, tallied by hand at High Tea/Coffee — see WALKIN_TRACKED).
+    // This is the number that actually matters for paying the caterer,
+    // not just the scanned count.
+    const summaryLines = items.map((i) => {
+      const scanned = filtered.filter((a) => Boolean(a[i.key])).length;
+      const w = walkinFor(i.key);
+      const walkin = w ? walkinCounts[`${w.day}:${w.item}`] ?? 0 : 0;
+      const totalServed = scanned + walkin;
+      return w
+        ? [`${i.label} — total served: ${totalServed} (scanned ${scanned} + walk-in ${walkin})`]
+        : [`${i.label} — total served: ${totalServed}`];
     });
     const summary: (string | number)[][] = [
       [`INDIS 2026 — ${day ? `Day ${day}` : "All days"} export`],
       [`Total participants: ${total}`],
-      ...items.map((i) => [`${i.label} scanned: ${filtered.filter((a) => Boolean(a[i.key])).length} of ${total}`]),
-      ...walkinLines,
+      ...summaryLines,
       [],
     ];
     const header = [
@@ -884,14 +896,6 @@ function AdminPage() {
                     <WarningIcon />
                     Emergency scan
                   </button>
-                  <button
-                    className="onboard-entry-btn maintenance-entry-btn admin-entry-btn"
-                    onClick={() => setView("maintenance")}
-                    type="button"
-                  >
-                    <WrenchIcon />
-                    Maintenance
-                  </button>
                 </div>
 
                 {/* Live day */}
@@ -1104,6 +1108,18 @@ function AdminPage() {
                     </div>
                   </div>
                 </div>
+
+                <div className="admin-section-head admin-section-head-spaced">
+                  <h2 className="admin-h2">Maintenance</h2>
+                </div>
+                <button
+                  className="onboard-entry-btn maintenance-entry-btn admin-entry-btn"
+                  onClick={() => setView("maintenance")}
+                  type="button"
+                >
+                  <WrenchIcon />
+                  Maintenance
+                </button>
               </>
             )}
           </div>
