@@ -148,6 +148,13 @@ create policy "allow read on app_passwords" on app_passwords
 -- event), so admin can see/filter/count them separately.
 alter table attendees add column if not exists is_onspot boolean not null default false;
 
+-- Maintenance -> "Edit participant": whether an admin has physically
+-- scanned this person's printed badge and confirmed it decodes to this
+-- exact record (name/serial line up) — separate from the general
+-- edit fields, since it's a checklist item ("have I verified this ID"),
+-- not a fact about the attendee themselves.
+alter table attendees add column if not exists id_verified boolean not null default false;
+
 -- Single-row key/value store for small app-wide settings that aren't
 -- per-category. Currently used for "live_day" — which day (1/2/3) the
 -- volunteer scan flow treats as "today" for the home screen's
@@ -219,6 +226,12 @@ create table if not exists login_log (
 alter table login_log enable row level security;
 -- Deliberately no policies — see comment above.
 
+-- Username matching is case-insensitive ("Priya" and "priya" are the same
+-- login) — compares lower(username) rather than the raw column, so
+-- whatever case someone happens to type still matches. add_app_user
+-- below now lowercases on insert, so two accounts differing only by
+-- case can't exist going forward; if one somehow already does, this
+-- just matches whichever sorts first.
 create or replace function verify_login(p_username text, p_password text)
 returns table(username text, role text, display_name text)
 language plpgsql
@@ -230,8 +243,9 @@ declare
 begin
   select u.username, u.role, u.display_name into v_match
   from app_users u
-  where u.username = p_username
-    and u.password_hash = crypt(p_password, u.password_hash);
+  where lower(u.username) = lower(p_username)
+    and u.password_hash = crypt(p_password, u.password_hash)
+  limit 1;
 
   insert into login_log (username, success, role)
   values (p_username, v_match.username is not null, v_match.role);
@@ -279,10 +293,30 @@ language plpgsql
 set search_path = public, extensions
 as $$
 begin
+  -- Lowercased on the way in so login stays case-insensitive without
+  -- ever having two accounts that only differ by case.
   insert into app_users (username, password_hash, role, display_name)
-  values (p_username, crypt(p_password, gen_salt('bf')), p_role, p_display_name);
+  values (lower(p_username), crypt(p_password, gen_salt('bf')), p_role, p_display_name);
 end;
 $$;
+
+-- One-time cleanup for any existing accounts created before this change
+-- with mixed-case usernames — normalizes them to lowercase so they match
+-- the same convention. Skipped (with a notice) if that would collide
+-- with an existing lowercase username; fix any such pair by hand
+-- (set_app_user_password + delete the duplicate) if it ever prints.
+do $$
+declare
+  r record;
+begin
+  for r in select username from app_users where username <> lower(username) loop
+    if exists (select 1 from app_users where username = lower(r.username) and username <> r.username) then
+      raise notice 'Skipped lowercasing "%": "%" already exists — resolve by hand.', r.username, lower(r.username);
+    else
+      update app_users set username = lower(username) where username = r.username;
+    end if;
+  end loop;
+end $$;
 
 create or replace function set_app_user_password(
   p_username text,
@@ -295,7 +329,7 @@ as $$
 begin
   update app_users
   set password_hash = crypt(p_new_password, gen_salt('bf'))
-  where username = p_username;
+  where lower(username) = lower(p_username);
 end;
 $$;
 

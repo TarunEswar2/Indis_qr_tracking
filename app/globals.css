@@ -1239,6 +1239,55 @@
   font-weight: 600;
   margin: 0;
 }
+/* "ID verified" checklist toggle on the Edit participant screen. */
+.maint-verify-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--grey-100);
+  border: 1.5px solid var(--grey-300);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.maint-verify-row-on {
+  background: #eaf7ee;
+  border-color: #1a7f37;
+}
+.maint-verify-label {
+  font-size: 13px;
+  color: var(--grey-700);
+}
+.maint-verify-row-on .maint-verify-label {
+  color: #1a7f37;
+  font-weight: 600;
+}
+.maint-verify-btn {
+  background: var(--black);
+  color: var(--white);
+  border: 1.5px solid var(--black);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.maint-verify-btn:active {
+  transform: scale(0.96);
+}
+/* Small green dot next to a verified attendee's serial in the search
+   results list. */
+.maint-verified-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1a7f37;
+  margin-left: 6px;
+}
 .emergency-contact-rows {
   margin-top: 18px;
   border-top: 1px solid var(--black);

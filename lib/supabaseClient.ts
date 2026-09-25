@@ -35,6 +35,9 @@ export type Attendee = {
   phone: string | null;
   email: string | null;
   registered_days: number[]; // which of [1, 2, 3] this person actually registered for
+  // Maintenance -> "Edit participant": has an admin physically scanned
+  // this person's badge and confirmed it decodes to this exact record?
+  id_verified: boolean;
 } & Record<ItineraryKey, string | null>; // null = not done, timestamp = done
 
 /**
@@ -286,6 +289,21 @@ export async function updateAttendee(attendeeId: string, fields: AttendeeEditabl
     .single();
   if (error) throw error;
   return data as Attendee;
+}
+
+/**
+ * Mark whether an admin has physically scanned this person's badge and
+ * confirmed it decodes to this exact record — a checklist flag, saved
+ * immediately (like setAttendeeRegisteredDays) rather than bundled into
+ * the general edit form's Save button, since ticking it is its own act
+ * ("I just verified this one") separate from editing their details.
+ */
+export async function setAttendeeIdVerified(attendeeId: string, verified: boolean) {
+  const { error } = await supabase
+    .from("attendees")
+    .update({ id_verified: verified })
+    .eq("id", attendeeId);
+  if (error) throw error;
 }
 
 // ---------------------------------------------------------------------
