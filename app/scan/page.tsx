@@ -641,6 +641,24 @@ function ScanScreen({
 
 // ---------- CONFIRMED ----------
 
+// Conference Kit is the one screen that needs extra, per-person callouts
+// beyond "entry confirmed": volunteers don't get a physical kit (their scan
+// still gets recorded — this is also how the app tracks whether their ID
+// card was handed over), and short-paper authors get a diary alongside
+// their kit. Neither is stored anywhere new — both read straight off the
+// attendee record that was just confirmed.
+function kitScanNotes(category: Category, attendee: Attendee): string[] {
+  if (category !== "kit") return [];
+  const notes: string[] = [];
+  if (attendee.designation?.trim().toLowerCase() === "volunteer") {
+    notes.push("Volunteer — no conference kit needed. (Scan recorded as their ID card handover.)");
+  }
+  if (attendee.short_paper) {
+    notes.push("Short-paper author — also give a Diary.");
+  }
+  return notes;
+}
+
 function ConfirmedScreen({
   day,
   category,
@@ -657,6 +675,7 @@ function ConfirmedScreen({
   onBackToScanner: () => void;
 }) {
   const timeLabel = confirmedAt ? confirmedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  const notes = kitScanNotes(category, attendee);
 
   return (
     <div className="screen">
@@ -676,6 +695,16 @@ function ConfirmedScreen({
         <p className="confirm-title">Entry confirmed</p>
         {timeLabel && <p className="confirm-time">at {timeLabel}</p>}
       </div>
+
+      {notes.length > 0 && (
+        <div className="kit-scan-notes">
+          {notes.map((note) => (
+            <p key={note} className="kit-scan-note">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
 
       <div className="delegate-card">
         <DelegatePreview attendee={attendee} />

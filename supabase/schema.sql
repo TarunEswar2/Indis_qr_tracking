@@ -155,6 +155,19 @@ alter table attendees add column if not exists is_onspot boolean not null defaul
 -- not a fact about the attendee themselves.
 alter table attendees add column if not exists id_verified boolean not null default false;
 
+-- Short-paper authors get a diary along with their conference kit —
+-- everyone else doesn't. This just marks who qualifies; the actual
+-- "diary given" moment isn't tracked separately (no diary_received
+-- column) — the Conference Kit scan screen shows a one-time reminder
+-- ("+ Give Diary") for anyone with this flag set, and that's it.
+alter table attendees add column if not exists short_paper boolean not null default false;
+
+-- To mark a batch of short-paper authors once you have the list (repeat
+-- serial_code for each, or use `in (...)` with the full list at once):
+--
+--   update attendees set short_paper = true
+--   where serial_code in ('INDIS2026-1165', 'INDIS2026-1166');
+
 -- Single-row key/value store for small app-wide settings that aren't
 -- per-category. Currently used for "live_day" — which day (1/2/3) the
 -- volunteer scan flow treats as "today" for the home screen's

@@ -38,6 +38,10 @@ export type Attendee = {
   // Maintenance -> "Edit participant": has an admin physically scanned
   // this person's badge and confirmed it decodes to this exact record?
   id_verified: boolean;
+  // Short-paper author — gets a diary along with their conference kit.
+  // The scan flow reads this to show a "+ Give Diary" reminder on the
+  // Conference Kit screen; there's no separate "diary given" tracking.
+  short_paper: boolean;
 } & Record<ItineraryKey, string | null>; // null = not done, timestamp = done
 
 /**
@@ -65,6 +69,7 @@ const ATTENDEE_COLUMNS_NO_CONTACT = [
   "is_onspot",
   "designation",
   "registered_days",
+  "short_paper",
   ...ITINERARY_ITEMS.map((i) => i.key),
 ].join(", ");
 
