@@ -392,3 +392,18 @@ alter table walkin_counts enable row level security;
 
 create policy "allow all on walkin_counts" on walkin_counts
   for all using (true) with check (true);
+
+-- ---------------------------------------------------------------------
+-- Walk-in tracking for Lunch, Day 1 (added later — see admin dashboard /
+-- volunteer scan flow for the "+1 walk-in" UI). walkin_counts.item was
+-- check-constrained to ('high_tea', 'coffee'); widen it to allow 'lunch'
+-- too, then seed the missing rows. Safe to re-run: the constraint drop
+-- uses the default Postgres-generated name for an unnamed check on this
+-- column, and the insert is an upsert-style no-op on conflict.
+alter table walkin_counts drop constraint if exists walkin_counts_item_check;
+alter table walkin_counts add constraint walkin_counts_item_check
+  check (item in ('high_tea', 'coffee', 'lunch'));
+
+insert into walkin_counts (day, item, count)
+values (1, 'lunch', 0)
+on conflict (day, item) do nothing;

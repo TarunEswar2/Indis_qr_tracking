@@ -213,19 +213,24 @@ function LiveDayTool({
         {dayCats.map((c) => {
           const key = keyFor(liveDay, c);
           const enabled = key && settings ? settings[key] : true;
+          // Lunch is only walk-in-tracked on Day 1 (for now) — High
+          // Tea/Coffee stay tracked every day. See the matching
+          // day-aware override in app/scan/page.tsx.
+          const walkinItem: WalkinItem | undefined =
+            c === "lunch" ? (liveDay === 1 ? "lunch" : undefined) : WALKIN_TRACKED[c];
           return (
             <div className="admin-cat-row" key={c}>
               <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
               <span className="admin-cat-count">
                 {scanCount(liveDay, c)} scanned
-                {WALKIN_TRACKED[c] && (
+                {walkinItem && (
                   <span className="admin-walkin-adjust">
                     {" · "}
-                    {walkinCounts[`${liveDay}:${WALKIN_TRACKED[c]!}`] ?? 0} walk-in
+                    {walkinCounts[`${liveDay}:${walkinItem}`] ?? 0} walk-in
                     <button
                       type="button"
                       className="admin-walkin-btn"
-                      onClick={() => onAdjustWalkin(WALKIN_TRACKED[c]!, -1)}
+                      onClick={() => onAdjustWalkin(walkinItem, -1)}
                       aria-label={`Decrease ${CATEGORY_LABEL[c]} walk-in count`}
                     >
                       −
@@ -233,7 +238,7 @@ function LiveDayTool({
                     <button
                       type="button"
                       className="admin-walkin-btn"
-                      onClick={() => onAdjustWalkin(WALKIN_TRACKED[c]!, 1)}
+                      onClick={() => onAdjustWalkin(walkinItem, 1)}
                       aria-label={`Increase ${CATEGORY_LABEL[c]} walk-in count`}
                     >
                       +

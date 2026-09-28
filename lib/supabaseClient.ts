@@ -319,7 +319,7 @@ export async function setAttendeeIdVerified(attendeeId: string, verified: boolea
 // heavy concurrent writes.
 // ---------------------------------------------------------------------
 
-export type WalkinItem = "high_tea" | "coffee";
+export type WalkinItem = "high_tea" | "coffee" | "lunch";
 
 /** All six day/item counts at once, keyed as "day:item" (e.g. "1:coffee"). */
 export async function getWalkinCounts(): Promise<Record<string, number>> {
