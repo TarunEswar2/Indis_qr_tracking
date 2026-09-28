@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Attendee, AttendeeEditableFields, setAttendeeIdVerified, updateAttendee } from "@/lib/supabaseClient";
+import {
+  Attendee,
+  AttendeeEditableFields,
+  CategorySettings,
+  ItineraryKey,
+  WalkinItem,
+  setAttendeeIdVerified,
+  updateAttendee,
+} from "@/lib/supabaseClient";
 
 // Admin dashboard -> "Maintenance": two housekeeping tools that don't fit
 // the day-to-day scan/onboard/emergency flows.
@@ -41,6 +49,212 @@ function runExclusive<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
+// ---- Live day & Categories (moved here from the main admin dashboard —
+// see MaintenanceFlow default export below) ----
+
+type Category = "kit" | "lunch" | "highTea" | "coffee" | "gala";
+type Day = 1 | 2 | 3;
+
+const CATEGORY_LABEL: Record<Category, string> = {
+  kit: "Conference Kit",
+  lunch: "Lunch",
+  highTea: "High Tea",
+  coffee: "Coffee",
+  gala: "Gala Dinner",
+};
+
+// Kit is a one-time item now offered on every day (see keyFor below), so
+// it appears in every day's category list.
+const DAY_CATEGORIES: Record<Day, Category[]> = {
+  1: ["kit", "lunch", "highTea", "coffee"],
+  2: ["kit", "lunch", "highTea", "coffee", "gala"],
+  3: ["kit", "lunch", "highTea", "coffee"],
+};
+
+// Categories that also serve people with no badge/QR at all — the
+// dashboard shows their walk-in headcount alongside the scanned count.
+const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
+  highTea: "high_tea",
+  coffee: "coffee",
+};
+
+function keyFor(day: Day, category: Category): ItineraryKey | null {
+  if (category === "kit") return "kit_received"; // one-time item, offered every day
+  if (category === "lunch") {
+    if (day === 1) return "lunch_day1";
+    if (day === 2) return "lunch_day2";
+    return "lunch_day3";
+  }
+  if (category === "highTea") {
+    if (day === 1) return "high_tea_day1";
+    if (day === 2) return "high_tea_day2";
+    return "high_tea_day3";
+  }
+  if (category === "coffee") {
+    if (day === 1) return "coffee_day1";
+    if (day === 2) return "coffee_day2";
+    return "coffee_day3";
+  }
+  if (category === "gala") return day === 2 ? "gala_dinner" : null;
+  return null;
+}
+
+function ChevronLeft(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M15 6L9 12L15 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronRight(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" {...props}>
+      <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: () => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`toggle ${checked ? "toggle-on" : ""}`}
+      onClick={onChange}
+      aria-pressed={checked}
+      aria-label={label}
+      disabled={disabled}
+    >
+      <span className="toggle-knob" />
+    </button>
+  );
+}
+
+function LiveDayTool({
+  attendees,
+  onBack,
+  liveDay,
+  savingLiveDay,
+  onChangeLiveDay,
+  settings,
+  togglingKey,
+  walkinCounts,
+  onToggleCategory,
+  onToggleMasterForDay,
+  onAdjustWalkin,
+}: {
+  attendees: Attendee[];
+  onBack: () => void;
+  liveDay: Day;
+  savingLiveDay: boolean;
+  onChangeLiveDay: (next: Day) => void;
+  settings: CategorySettings | null;
+  togglingKey: ItineraryKey | null;
+  walkinCounts: Record<string, number>;
+  onToggleCategory: (key: ItineraryKey) => void;
+  onToggleMasterForDay: (day: Day) => void;
+  onAdjustWalkin: (item: WalkinItem, delta: number) => void;
+}) {
+  const dayCats = DAY_CATEGORIES[liveDay];
+  const dayKeys = dayCats.map((c) => keyFor(liveDay, c)).filter(Boolean) as ItineraryKey[];
+  const masterOn = settings ? dayKeys.every((k) => settings[k]) : true;
+
+  function scanCount(day: Day, cat: Category) {
+    const key = keyFor(day, cat);
+    if (!key) return 0;
+    return attendees.filter((a) => Boolean(a[key])).length;
+  }
+
+  return (
+    <div className="screen">
+      <div className="scan-header">
+        <button className="icon-btn" onClick={onBack} aria-label="Back to maintenance">
+          <BackArrow />
+        </button>
+        <h1 className="scan-title">Live day &amp; Categories</h1>
+      </div>
+
+      <div className="admin-section-head">
+        <h2 className="admin-h2">Live day</h2>
+        <div className="admin-day-nav">
+          <button
+            className="icon-circle-btn"
+            onClick={() => onChangeLiveDay((Math.max(1, liveDay - 1)) as Day)}
+            disabled={liveDay === 1 || savingLiveDay}
+            aria-label="Previous live day"
+          >
+            <ChevronLeft />
+          </button>
+          <span className="admin-live-day-label">Day {liveDay}</span>
+          <button
+            className="icon-circle-btn"
+            onClick={() => onChangeLiveDay((Math.min(3, liveDay + 1)) as Day)}
+            disabled={liveDay === 3 || savingLiveDay}
+            aria-label="Next live day"
+          >
+            <ChevronRight />
+          </button>
+        </div>
+      </div>
+      <p className="qr-help admin-live-day-help">
+        What the volunteer scanner treats as "today" — its categories are open (subject to the toggles
+        below), earlier days show "Closed", later days are locked.
+      </p>
+
+      <div className="admin-section-head admin-section-head-spaced">
+        <h2 className="admin-h2">Categories</h2>
+      </div>
+
+      <div className="admin-cat-table">
+        <div className="admin-cat-day-row">
+          <span>DAY {String(liveDay).padStart(2, "0")}</span>
+          <Toggle checked={masterOn} onChange={() => onToggleMasterForDay(liveDay)} label="Toggle all categories" />
+        </div>
+        {dayCats.map((c) => {
+          const key = keyFor(liveDay, c);
+          const enabled = key && settings ? settings[key] : true;
+          return (
+            <div className="admin-cat-row" key={c}>
+              <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
+              <span className="admin-cat-count">
+                {scanCount(liveDay, c)} scanned
+                {WALKIN_TRACKED[c] && (
+                  <span className="admin-walkin-adjust">
+                    {" · "}
+                    {walkinCounts[`${liveDay}:${WALKIN_TRACKED[c]!}`] ?? 0} walk-in
+                    <button
+                      type="button"
+                      className="admin-walkin-btn"
+                      onClick={() => onAdjustWalkin(WALKIN_TRACKED[c]!, -1)}
+                      aria-label={`Decrease ${CATEGORY_LABEL[c]} walk-in count`}
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      className="admin-walkin-btn"
+                      onClick={() => onAdjustWalkin(WALKIN_TRACKED[c]!, 1)}
+                      aria-label={`Increase ${CATEGORY_LABEL[c]} walk-in count`}
+                    >
+                      +
+                    </button>
+                  </span>
+                )}
+              </span>
+              <Toggle
+                checked={Boolean(enabled)}
+                onChange={() => key && onToggleCategory(key)}
+                label={`Toggle ${CATEGORY_LABEL[c]}`}
+                disabled={!key || togglingKey === key}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BackArrow(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" {...props}>
@@ -49,7 +263,7 @@ function BackArrow(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-type Tool = "scanqr" | "edit" | null;
+type Tool = "scanqr" | "edit" | "liveday" | null;
 
 function ScanQrTool({
   attendees,
@@ -655,16 +869,50 @@ export default function MaintenanceFlow({
   attendees,
   onBack,
   onAttendeeUpdated,
+  liveDay,
+  savingLiveDay,
+  onChangeLiveDay,
+  settings,
+  togglingKey,
+  walkinCounts,
+  onToggleCategory,
+  onToggleMasterForDay,
+  onAdjustWalkin,
 }: {
   attendees: Attendee[];
   onBack: () => void;
   onAttendeeUpdated: (a: Attendee) => void;
+  liveDay: Day;
+  savingLiveDay: boolean;
+  onChangeLiveDay: (next: Day) => void;
+  settings: CategorySettings | null;
+  togglingKey: ItineraryKey | null;
+  walkinCounts: Record<string, number>;
+  onToggleCategory: (key: ItineraryKey) => void;
+  onToggleMasterForDay: (day: Day) => void;
+  onAdjustWalkin: (item: WalkinItem, delta: number) => void;
 }) {
   const [tool, setTool] = useState<Tool>(null);
 
   if (tool === "scanqr")
     return <ScanQrTool attendees={attendees} onBack={() => setTool(null)} onAttendeeUpdated={onAttendeeUpdated} />;
   if (tool === "edit") return <EditParticipantTool attendees={attendees} onBack={() => setTool(null)} onAttendeeUpdated={onAttendeeUpdated} />;
+  if (tool === "liveday")
+    return (
+      <LiveDayTool
+        attendees={attendees}
+        onBack={() => setTool(null)}
+        liveDay={liveDay}
+        savingLiveDay={savingLiveDay}
+        onChangeLiveDay={onChangeLiveDay}
+        settings={settings}
+        togglingKey={togglingKey}
+        walkinCounts={walkinCounts}
+        onToggleCategory={onToggleCategory}
+        onToggleMasterForDay={onToggleMasterForDay}
+        onAdjustWalkin={onAdjustWalkin}
+      />
+    );
 
   return (
     <div className="screen">
@@ -676,6 +924,9 @@ export default function MaintenanceFlow({
       </div>
 
       <div className="maint-tool-list">
+        <button className="onboard-entry-btn admin-entry-btn" type="button" onClick={() => setTool("liveday")}>
+          Live day &amp; categories
+        </button>
         <button className="onboard-entry-btn admin-entry-btn" type="button" onClick={() => setTool("scanqr")}>
           Scan QR — verify badges
         </button>

@@ -699,10 +699,6 @@ function AdminPage() {
     XLSX.writeFile(wb, `indis-attendees-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  const dayCats = DAY_CATEGORIES[liveDay];
-  const dayKeys = dayCats.map((c) => keyFor(liveDay, c)).filter(Boolean) as ItineraryKey[];
-  const masterOn = settings ? dayKeys.every((k) => settings[k]) : true;
-
   return (
     <div className="wrap">
       <div className="phone admin-phone">
@@ -870,6 +866,15 @@ function AdminPage() {
               onAttendeeUpdated={(updated) =>
                 setAttendees((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
               }
+              liveDay={liveDay}
+              savingLiveDay={savingLiveDay}
+              onChangeLiveDay={changeLiveDay}
+              settings={settings}
+              togglingKey={togglingKey}
+              walkinCounts={walkinCounts}
+              onToggleCategory={toggleCategory}
+              onToggleMasterForDay={toggleMasterForDay}
+              onAdjustWalkin={adjustWalkin}
             />
           ) : (
           <div className="screen admin-screen">
@@ -898,87 +903,6 @@ function AdminPage() {
                   </button>
                 </div>
 
-                {/* Live day */}
-                <div className="admin-section-head">
-                  <h2 className="admin-h2">Live day</h2>
-                  <div className="admin-day-nav">
-                    <button
-                      className="icon-circle-btn"
-                      onClick={() => changeLiveDay((Math.max(1, liveDay - 1)) as Day)}
-                      disabled={liveDay === 1 || savingLiveDay}
-                      aria-label="Previous live day"
-                    >
-                      <ChevronLeft />
-                    </button>
-                    <span className="admin-live-day-label">Day {liveDay}</span>
-                    <button
-                      className="icon-circle-btn"
-                      onClick={() => changeLiveDay((Math.min(3, liveDay + 1)) as Day)}
-                      disabled={liveDay === 3 || savingLiveDay}
-                      aria-label="Next live day"
-                    >
-                      <ChevronRight />
-                    </button>
-                  </div>
-                </div>
-                <p className="qr-help admin-live-day-help">
-                  What the volunteer scanner treats as "today" — its categories are open (subject to the toggles
-                  below), earlier days show "Closed", later days are locked.
-                </p>
-
-                {/* Categories — always the live day's, so there's one
-                    day concept in this whole screen rather than a second
-                    "which day am I editing" control to keep in sync. */}
-                <div className="admin-section-head admin-section-head-spaced">
-                  <h2 className="admin-h2">Categories</h2>
-                </div>
-
-                <div className="admin-cat-table">
-                  <div className="admin-cat-day-row">
-                    <span>DAY {String(liveDay).padStart(2, "0")}</span>
-                    <Toggle checked={masterOn} onChange={() => toggleMasterForDay(liveDay)} label="Toggle all categories" />
-                  </div>
-                  {dayCats.map((c) => {
-                    const key = keyFor(liveDay, c);
-                    const enabled = key && settings ? settings[key] : true;
-                    return (
-                      <div className="admin-cat-row" key={c}>
-                        <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
-                        <span className="admin-cat-count">
-                          {scanCount(liveDay, c)} scanned
-                          {WALKIN_TRACKED[c] && (
-                            <span className="admin-walkin-adjust">
-                              {" · "}
-                              {walkinCounts[`${liveDay}:${WALKIN_TRACKED[c]!}`] ?? 0} walk-in
-                              <button
-                                type="button"
-                                className="admin-walkin-btn"
-                                onClick={() => adjustWalkin(WALKIN_TRACKED[c]!, -1)}
-                                aria-label={`Decrease ${CATEGORY_LABEL[c]} walk-in count`}
-                              >
-                                −
-                              </button>
-                              <button
-                                type="button"
-                                className="admin-walkin-btn"
-                                onClick={() => adjustWalkin(WALKIN_TRACKED[c]!, 1)}
-                                aria-label={`Increase ${CATEGORY_LABEL[c]} walk-in count`}
-                              >
-                                +
-                              </button>
-                            </span>
-                          )}
-                        </span>
-                        <Toggle
-                          checked={Boolean(enabled)}
-                          onChange={() => key && toggleCategory(key)}
-                          label={`Toggle ${CATEGORY_LABEL[c]}`}
-                          disabled={!key || togglingKey === key}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
 
                 {/* Attendees */}
                 <div className="admin-section-head admin-attendees-head">
