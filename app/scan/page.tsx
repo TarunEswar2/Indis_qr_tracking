@@ -58,10 +58,9 @@ const DAY_CATEGORIES: Record<Day, Category[]> = {
 
 // Categories that also serve people with no badge/QR at all — the scan
 // screen shows a "+1 walk-in" counter for these so that headcount isn't
-// lost. keyed to the walkin_counts table's `item` values. Lunch is only
-// walk-in-tracked on Day 1 (see the day-aware override where walkinItem
-// is computed below) — High Tea/Coffee stay tracked every day.
+// lost. keyed to the walkin_counts table's `item` values.
 const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
+  lunch: "lunch",
   highTea: "high_tea",
   coffee: "coffee",
 };
@@ -296,11 +295,9 @@ function ScanScreen({
   // to be "just the last few digits" and more than one attendee's serial
   // ends with it (rare — see findAttendeesBySerial in supabaseClient.ts).
   const [idMatches, setIdMatches] = useState<Attendee[] | null>(null);
-  // Walk-in (no badge/QR) headcount for High Tea / Coffee (every day) and
-  // Lunch (Day 1 only, for now) — see WALKIN_TRACKED above and
-  // walkin_counts in supabase/schema.sql.
-  const walkinItem: WalkinItem | undefined =
-    category === "lunch" ? (day === 1 ? "lunch" : undefined) : WALKIN_TRACKED[category];
+  // Walk-in (no badge/QR) headcount for Lunch / High Tea / Coffee — see
+  // WALKIN_TRACKED above and walkin_counts in supabase/schema.sql.
+  const walkinItem = WALKIN_TRACKED[category];
   const [walkinCount, setWalkinCount] = useState<number | null>(null);
   const [walkinBumping, setWalkinBumping] = useState(false);
   const scannerRef = useRef<any>(null);

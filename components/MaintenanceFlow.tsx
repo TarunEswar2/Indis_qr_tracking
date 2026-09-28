@@ -74,6 +74,7 @@ const DAY_CATEGORIES: Record<Day, Category[]> = {
 // Categories that also serve people with no badge/QR at all — the
 // dashboard shows their walk-in headcount alongside the scanned count.
 const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
+  lunch: "lunch",
   highTea: "high_tea",
   coffee: "coffee",
 };
@@ -213,11 +214,7 @@ function LiveDayTool({
         {dayCats.map((c) => {
           const key = keyFor(liveDay, c);
           const enabled = key && settings ? settings[key] : true;
-          // Lunch is only walk-in-tracked on Day 1 (for now) — High
-          // Tea/Coffee stay tracked every day. See the matching
-          // day-aware override in app/scan/page.tsx.
-          const walkinItem: WalkinItem | undefined =
-            c === "lunch" ? (liveDay === 1 ? "lunch" : undefined) : WALKIN_TRACKED[c];
+          const walkinItem = WALKIN_TRACKED[c];
           return (
             <div className="admin-cat-row" key={c}>
               <span className="admin-cat-name">{CATEGORY_LABEL[c]}</span>
