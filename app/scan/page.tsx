@@ -63,6 +63,7 @@ const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
   lunch: "lunch",
   highTea: "high_tea",
   coffee: "coffee",
+  gala: "gala",
 };
 
 // day + category -> real Supabase column, or null if that combo doesn't apply.

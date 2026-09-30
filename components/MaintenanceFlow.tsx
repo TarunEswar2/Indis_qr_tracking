@@ -77,6 +77,7 @@ const WALKIN_TRACKED: Partial<Record<Category, WalkinItem>> = {
   lunch: "lunch",
   highTea: "high_tea",
   coffee: "coffee",
+  gala: "gala",
 };
 
 function keyFor(day: Day, category: Category): ItineraryKey | null {
